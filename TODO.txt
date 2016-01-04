@@ -1,0 +1,27 @@
+﻿TODO:
+
+- test some ideas:
+  + array: buffered pull source
+  + file: unbuffered pull source
+  + file: unbuffered push sink
+  + alsa: unbuffered push sink
+  + curl: buffered push source
+  - rabbit: unbuffered pull source / unbuffered push sink (started)
+  + mad: unbuffered pull sink / unbuffered push source
+  + pull buffer: attach unbuffered pull source => unbuffered pull sink
+  + push buffer: attach unbuffered push source => unbuffered push sink
+  + circular pull buffer: use a circular buffer optimized with mmap
+  + push to pull buffer using fibers: attach buffered push source to unbuffered pull source
+  + ubyte buffers
+  - unicode translating buffers/filters
+  - buffers with other primitive data types (int, float, etc.)
+  - buffers with POD struct data types
+  - buffer traits
+  - pipeline composition functions
+  - input streams
+  - output streams
+  - seekable sources/sinks/streams
+  - demuxer
+  - muxer (interleave 2 or more input streams in one output stream)
+  - splitter (create sequence of streams)
+  - joiner (merge sequence of streams)
