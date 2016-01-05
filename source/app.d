@@ -169,11 +169,6 @@ struct FromArray(T)
 {
 	const(T)[] array;
 
-	this(const(T[]) arr)
-	{
-		array = arr;
-	}
-
 	/* pull source with own buffer */
 	const(T[]) peek(size_t length)
 	{
