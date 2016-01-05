@@ -5,6 +5,7 @@
 pre .pln { color: #000 }  /* plain text */
 
 pre {
+	font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
     white-space: pre-wrap;       /* CSS 3 */
     white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
     white-space: -pre-wrap;      /* Opera 4-6 */
