@@ -19,9 +19,14 @@
   - buffer traits
   - pipeline composition functions
   - input streams
+    - byLine
+    - byChunk
   - output streams
+  - adapters (process individual elements 1 to 1 without allocating new buffers)
   - seekable sources/sinks/streams
   - demuxer
   - muxer (interleave 2 or more input streams in one output stream)
   - splitter (create sequence of streams)
   - joiner (merge sequence of streams)
+  - bus messages (or exceptions are sufficient?)
+  - upstream queries / stream properties / metadata / out-of-band data
