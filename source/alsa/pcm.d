@@ -1,8 +1,6 @@
 ///
 module alsa.pcm;
 
-pragma (lib, "asound");
-
 // Dummy struct, only pointers are used.
 struct snd_pcm_t
 {
@@ -69,16 +67,10 @@ enum snd_pcm_format_t
 	SND_PCM_FORMAT_LAST = SND_PCM_FORMAT_U18_3BE,
 }
 
-version (X86_64)
-{
-	alias long snd_pcm_sframes_t;
-	alias ulong snd_pcm_uframes_t;
-}
-else version (X86)
-{
-	alias int snd_pcm_sframes_t;
-	alias uint snd_pcm_uframes_t;
-}
+import core.stdc.config;
+
+alias c_long snd_pcm_sframes_t;
+alias c_ulong snd_pcm_uframes_t;
 
 extern (C)
 int snd_pcm_open(snd_pcm_t **pcm, const char *name, snd_pcm_stream_t stream, int mode);
