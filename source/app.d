@@ -236,7 +236,7 @@ struct PullBuffer(Source, T)
 
 template SourceDataType(Source)
 {
-	private import std.traits : arity, ReturnType, Parameters, isDynamicArray, ForeachType, Unqual;
+	private import std.traits : arity, ReturnType, Parameters = ParameterTypeTuple, isDynamicArray, ForeachType, Unqual;
 
 	static if (__traits(compiles, arity!(Source.init.pull))
 	        && arity!(Source.init.pull) == 1
@@ -281,7 +281,7 @@ struct PushBuffer(Sink, T)
 
 template SinkDataType(Sink)
 {
-	import std.traits : arity, ReturnType, Parameters, isDynamicArray, ForeachType, Unqual;
+	private import std.traits : arity, ReturnType, Parameters = ParameterTypeTuple, isDynamicArray, ForeachType, Unqual;
 
 	static if (__traits(compiles, arity!(Sink.init.push))
 	        && arity!(Sink.init.push) == 1
@@ -474,7 +474,7 @@ struct CurlReader
 		CURL* curl = enforce(curl_easy_init(), "failed to init curl");
 		curl_easy_setopt(curl, CurlOption.url, url);
 		curl_easy_setopt(curl, CurlOption.writefunction, &mywrite!Sink);
-		curl_easy_setopt(curl, CurlOption.writedata, p);
+		curl_easy_setopt(curl, CurlOption.file, p);
 		stderr.writefln("calling curl_easy_perform");
 		/*res = */ curl_easy_perform(curl);
 		curl_easy_cleanup(curl);
@@ -556,8 +556,8 @@ int main(string[] args)
 	import core.sys.posix.unistd;
 	import std.stdio : stdout;
 
-	import etc.linux.memoryerror;
-	registerMemoryErrorHandler();
+//	import etc.linux.memoryerror;
+//	registerMemoryErrorHandler();
 
 	import std.stdio : stdin;
 	stat_t st;
