@@ -1,24 +1,5 @@
 import dstreams;
 
-void testByLine()
-{
-	import std.range : take, array;
-	auto testArray = "first line\nsecond line\nline without terminator";
-	/+
-	zassert(stream!fromArray(testArray).byLine(KeepTerminator.yes, 'e').array == [
-		"first line", "\nse", "cond line", "\nline", " without te", "rminator" ]);
-	zassert(stream!fromArray(testArray).byLine(KeepTerminator.no, 'e').array == [
-		"first lin", "\ns", "cond lin", "\nlin", " without t", "rminator" ]);
-	zassert(stream!fromArray(testArray).byLine!(char, char)(KeepTerminator.yes).array == [
-		"first line\n", "second line\n", "line without terminator" ]);
-	zassert(stream!fromArray(testArray).byLine!(char, char).array == [
-		"first line", "second line", "line without terminator" ]);
-	zassert(stream!fromArray(testArray).byLine(KeepTerminator.yes, 'z').array == [
-		"first line\nsecond line\nline without terminator" ]);+/
-	foreach (c; stream!fromArray(testArray).byLine(KeepTerminator.yes, '\n'))
-		c.writeln();
-}
-
 int testMad()
 {
 	import core.sys.posix.sys.stat;
@@ -63,7 +44,6 @@ int testMad()
 
 int main(string[] args)
 {
-	testByLine();
 	testMad();
 
 	auto stream1 = stream!curlReader("file:///media/epi/Passport/music/chips_n_games/dubmood_2/sc/toffelskater_2007.128.mp3");

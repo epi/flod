@@ -638,3 +638,21 @@ auto stream(alias Comp, T...)(T args)
 		static assert(false);
 	pragma(msg, Type.stringof);
 }
+
+unittest
+{
+	import std.range : take, array;
+	auto testArray = "first line\nsecond line\nline without terminator";
+	assert(stream!fromArray(testArray).byLine(KeepTerminator.yes, 'e').array == [
+		"first line", "\nse", "cond line", "\nline", " without te", "rminator" ]);
+	assert(stream!fromArray(testArray).byLine(KeepTerminator.no, 'e').array == [
+		"first lin", "\ns", "cond lin", "\nlin", " without t", "rminator" ]);
+	assert(stream!fromArray(testArray).byLine!(char, char)(KeepTerminator.yes).array == [
+		"first line\n", "second line\n", "line without terminator" ]);
+	assert(stream!fromArray(testArray).byLine!(char, char).array == [
+		"first line", "second line", "line without terminator" ]);
+	assert(stream!fromArray(testArray).byLine(KeepTerminator.yes, 'z').array == [
+		"first line\nsecond line\nline without terminator" ]);
+	foreach (c; stream!fromArray(testArray).byLine(KeepTerminator.yes, '\n'))
+		c.writeln();
+}
