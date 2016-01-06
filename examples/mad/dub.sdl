@@ -1,0 +1,8 @@
+name "mad"
+description "An example mp3 player using dstreams."
+copyright "Copyright © 2016, Adrian Matoga"
+authors "Adrian Matoga"
+// Required because MAD is GPLed.
+license "GPL-2.0"
+dependency "dstreams" version="*" path="../.."
+libs "mad" "asound" "curl"
