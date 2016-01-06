@@ -460,25 +460,42 @@ struct CurlReader
 		this.url = url.toStringz();
 	}
 
+	static struct State(Sink)
+	{
+		Throwable e;
+		Sink* sink;
+	}
+
 	private extern(C)
 	static size_t mywrite(Sink)(const(void)* buf, size_t ms, size_t nm, void* obj)
 	{
-		stderr.writefln("mywrite %s %s", ms, nm);
-		Sink* p = cast(Sink*) obj;
-		p.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
+		State!Sink* state = cast(State!Sink*) obj;
+		try {
+			stderr.writefln("mywrite %s %s", ms, nm);
+			state.sink.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
+		}
+		catch (Throwable e) {
+			state.e = e;
+			return 0;
+		}
 		return ms * nm;
 	}
 
 	void push(Sink)(Sink sink)
 	{
-		Sink* p = &sink;
+		State!Sink state;
+		state.sink = &sink;
 		CURL* curl = enforce(curl_easy_init(), "failed to init curl");
 		curl_easy_setopt(curl, CurlOption.url, url);
 		curl_easy_setopt(curl, CurlOption.writefunction, &mywrite!Sink);
-		curl_easy_setopt(curl, CurlOption.file, p);
+		curl_easy_setopt(curl, CurlOption.file, &state);
 		stderr.writefln("calling curl_easy_perform");
-		/*res = */ curl_easy_perform(curl);
+		auto err = curl_easy_perform(curl);
+		if (err != CurlError.ok)
+			stderr.writefln("curlerror: %s", err);
 		curl_easy_cleanup(curl);
+		if (state.e)
+			throw state.e;
 	}
 }
 
