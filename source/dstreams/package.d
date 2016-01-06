@@ -1,10 +1,15 @@
-///
+/** Top-level dstreams module. Provides the most commonly used stuff.
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+ */
 module dstreams;
 
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 
 struct AlsaSink {
-	import alsa.pcm;
+	import dstreams.etc.bindings.alsa.pcm;
 	import std.string : toStringz;
 
 	this(uint channels, uint samplesPerSec, uint bitsPerSample)
@@ -58,7 +63,7 @@ auto alsaSink(uint channels, uint samplesPerSec, uint bitsPerSample)
 /* -> pull source, push sink -> */
 struct MadDecoder
 {
-	import mad;
+	import dstreams.etc.bindings.mad;
 
 	private struct SoSi(Source, Sink)
 	{
@@ -400,7 +405,7 @@ struct ToFile
 /* pull sink, push source */
 struct RabbitStage
 {
-	import samplerate;
+	import dstreams.etc.bindings.samplerate;
 
 	SRC_STATE *state;
 	int channels;

@@ -1,5 +1,10 @@
-///
-module alsa.pcm;
+/** Bindings to $(LINK2 http://www.alsa-project.org/alsa-doc/alsa-lib/pcm.html,ALSA PCM interface).
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0)
+ */
+module dstreams.etc.bindings.alsa.pcm;
 
 // Dummy struct, only pointers are used.
 struct snd_pcm_t

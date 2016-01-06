@@ -1,5 +1,11 @@
-///
-module mad;
+/** Bindings to $(LINK2 http://www.underbit.com/products/mad/,MAD: MPEG Audio Decoder).
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+ *  Note that MAD itself is licensed under $(LINK2 http://www.underbit.com/resources/license/gpl,GPL version 2).
+ */
+module dstreams.etc.bindings.mad;
 
 import core.stdc.config;
 

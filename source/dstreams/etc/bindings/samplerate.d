@@ -1,5 +1,12 @@
-///
-module samplerate;
+/** Bindings to $(LINK2 http://www.mega-nerd.com/SRC/,libsamplerate).
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+ *  Note that libsamplerate itself is licensed under $(LINK2 http://www.gnu.org/copyleft/gpl.html, GPL version 3)
+ *  or $(LINK2 http://www.mega-nerd.com/SRC/license.html,its own commercial license).
+ */
+module dstreams.etc.bindings.samplerate;
 
 import core.stdc.config;
 
