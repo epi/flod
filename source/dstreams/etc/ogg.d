@@ -11,11 +11,9 @@ import std.stdio;
 
 import dstreams.etc.bindings.ogg.ogg;
 
-
 /// buffered push sink
 /// buffered push source
 struct OggReader {
-
 	ogg_sync_state oy;
 	static struct OggStream
 	{
@@ -112,8 +110,7 @@ struct CurlBuffer {
 	}
 }
 
-
-
+version(none)
 unittest
 {
 	import std.stdio;
