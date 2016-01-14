@@ -447,61 +447,56 @@ struct RabbitStage
 	}
 }
 
-struct CurlReader
+struct CurlReader(Sink)
 {
+	Sink sink;
+
 	import etc.c.curl;
 	import std.exception : enforce;
 	import std.string : toStringz;
 
 	const(char)* url;
+	Throwable e;
 
 	this(string url)
 	{
 		this.url = url.toStringz();
 	}
 
-	static struct State(Sink)
+	void open(string url)
 	{
-		Throwable e;
-		Sink* sink;
+		this.url = url.toStringz();
+		sink.open();
 	}
 
 	private extern(C)
-	static size_t mywrite(Sink)(const(void)* buf, size_t ms, size_t nm, void* obj)
+	static size_t mywrite(const(void)* buf, size_t ms, size_t nm, void* obj)
 	{
-		State!Sink* state = cast(State!Sink*) obj;
+		CurlReader* self = cast(CurlReader*) obj;
 		try {
 			stderr.writefln("mywrite %s %s", ms, nm);
-			state.sink.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
-		}
-		catch (Throwable e) {
-			state.e = e;
+			self.sink.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
+		} catch (Throwable e) {
+			self.e = e;
 			return 0;
 		}
 		return ms * nm;
 	}
 
-	void push(Sink)(Sink sink)
+	void push()
 	{
-		State!Sink state;
-		state.sink = &sink;
 		CURL* curl = enforce(curl_easy_init(), "failed to init curl");
 		curl_easy_setopt(curl, CurlOption.url, url);
-		curl_easy_setopt(curl, CurlOption.writefunction, &mywrite!Sink);
-		curl_easy_setopt(curl, CurlOption.file, &state);
+		curl_easy_setopt(curl, CurlOption.writefunction, &mywrite);
+		curl_easy_setopt(curl, CurlOption.file, &this);
 		stderr.writefln("calling curl_easy_perform");
 		auto err = curl_easy_perform(curl);
 		if (err != CurlError.ok)
 			stderr.writefln("curlerror: %s", err);
 		curl_easy_cleanup(curl);
-		if (state.e)
-			throw state.e;
+		if (e)
+			throw e;
 	}
-}
-
-auto curlReader(string url)
-{
-	return CurlReader(url);
 }
 
 class PushToPullBuffer(Sink, ItsSink)
