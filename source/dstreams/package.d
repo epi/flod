@@ -499,6 +499,24 @@ struct CurlReader(Sink)
 	}
 }
 
+/// Convert buffered push source to unbuffered push source
+struct BufferedToUnbufferedPushSource(Sink) {
+	Sink sink;
+
+	void open()
+	{
+		sink.open();
+	}
+
+	void push(const(ubyte)[] b)
+	{
+		auto buf = sink.alloc(b.length);
+		buf[] = b[];
+		writeln(b.length);
+		sink.commit(buf.length);
+	}
+}
+
 class PushToPullBuffer(Sink, ItsSink)
 {
 	import core.thread;
@@ -565,7 +583,7 @@ auto pushToPullBuffer(Sink, ItsSink)(Sink sink, ItsSink itsSink)
 {
 	return new PushToPullBuffer!(Sink, ItsSink)(sink, itsSink);
 }
-
+/+
 struct InputStream(alias Comp, Type, T...)
 {
 	import std.typecons;
@@ -673,3 +691,4 @@ unittest
 	foreach (c; stream!fromArray(testArray).byLine(KeepTerminator.yes, '\n'))
 		c.writeln();
 }
++/

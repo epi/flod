@@ -8,39 +8,69 @@ module dstreams.etc.ogg;
 
 import std.exception : enforce;
 import std.stdio;
+import std.typecons : Tuple, tuple;
+import std.meta : allSatisfy;
 
 import dstreams.etc.bindings.ogg.ogg;
+import dstreams.traits : isUnbufferedPushSink, isBufferedPushSink;
+import dstreams : BufferedToUnbufferedPushSource;
 
 /// buffered push sink
-/// buffered push source
-struct OggReader {
+/// buffered push n-source
+struct OggReader(MultiSink)
+{
+private:
+	MultiSink sink;
 	ogg_sync_state oy;
-	static struct OggStream
-	{
+
+	alias PushFn = void function(OggReader* self, const(ubyte)[] buf);
+	alias CloseFn = void function(OggReader* self);
+	enum PushFn freeStream = cast(PushFn) cast(void*) -1;
+
+	static struct OggStream {
 		int serial;
+		PushFn push = freeStream;
+		CloseFn close;
 		ogg_stream_state os;
 	}
 
 	OggStream[4] streams;
-	int nstreams;
 
-	ogg_stream_state* getStreamBySerial(int serial)
+	static void doPush(string type)(OggReader* self, const(ubyte)[] buf) { self.sink.push!type(buf); }
+
+	static void doClose(string type)(OggReader* self) { self.sink.close!type(); }
+
+	OggStream* getStreamBySerial(int serial)
 	{
-		foreach (n; 0 .. nstreams) {
-			if (streams[n].serial == serial)
-				return &streams[n].os;
+		foreach (ref stream; streams[]) {
+			if (stream.serial == serial)
+				return &stream;
 		}
-		if (nstreams == streams.length)
-			throw new Exception("too many streams");
-		streams[nstreams].serial = serial;
-		enforce(ogg_stream_init(&streams[nstreams].os, serial) == 0, "ogg_stream_init failed");
-		return &streams[nstreams++].os;
+		foreach (ref stream; streams[]) {
+			if (stream.push == freeStream) {
+				stream.push = null;
+				stream.close = null;
+				stream.serial = serial;
+				enforce(ogg_stream_init(&stream.os, serial) == 0, "ogg_stream_init failed");
+				return &stream;
+			}
+		}
+		throw new Exception("too many streams");
 	}
 
-	void init()
+public:
+	void open()
 	{
 		ogg_sync_init(&oy);
 		zz = 0;
+	}
+
+	void close()
+	{
+		foreach (ref stream; streams[]) {
+			if (stream.close)
+				stream.close(&this);
+		}
 	}
 
 	ubyte[] alloc(size_t n)
@@ -51,7 +81,7 @@ struct OggReader {
 	}
 
 	size_t zz;
-	void commit(Sink)(Sink sink, size_t n)
+	void commit(size_t n)
 	{
 		auto res = ogg_sync_wrote(&oy, n);
 		enforce(res == 0, "libogg: written data not accepted");
@@ -64,11 +94,11 @@ struct OggReader {
 			//writefln("HEAD %(%02x%| %)", og.header[0 .. og.header_len]);
 			//writefln("DATA %(%02x%| %)", og.body_[0 .. og.body_len]);
 			int serial = ogg_page_serialno(&og);
-			ogg_stream_state* os = getStreamBySerial(serial);
-			enforce(ogg_stream_pagein(os, &og) == 0);
+			OggStream* str = getStreamBySerial(serial);
+			enforce(ogg_stream_pagein(&str.os, &og) == 0);
 			ogg_packet packet;
 			for (;;) {
-				res = ogg_stream_packetout(os, &packet);
+				res = ogg_stream_packetout(&str.os, &packet);
 				if (res == 0)
 					break;
 				if (res == -1) {
@@ -76,51 +106,135 @@ struct OggReader {
 					stderr.writeln("ogg lost sync");
 					break;
 				}
+				/+
 				writefln("%08x bytes=%10d b_o_s=%3d e_o_s=%3d granulepos=%10d %10d packetno=%10d",
 					serial, packet.bytes, packet.b_o_s, packet.e_o_s, packet.granulepos, zz, packet.packetno);
 				zz += packet.bytes;
-				sink.push(packet.packet[0 .. packet.bytes]);
+				+/
+				auto apacket = packet.packet[0 .. packet.bytes];
+
+				if (packet.b_o_s) {
+					writefln("BOS %08x bytes=%d: %(%02x%| %)", serial, packet.bytes, packet.packet[0 .. packet.bytes]);
+					if (apacket.length > 7 && apacket[1 .. 7] == "vorbis") {
+						str.push = &doPush!"audio";
+						str.close = &doClose!"audio";
+					}
+				}
+
+				//sinks[0].push(packet.packet[0 .. packet.bytes]);
+				//if (str.os)
+			//		sink.push!"audio"(packet.packet[0 .. packet.bytes]);
+			//	sink.push!"vizeo"(packet.packet[0 .. packet.bytes]);
+				if (str.push)
+					str.push(&this, packet.packet[0 .. packet.bytes]);
+
+				if (packet.e_o_s) {
+					writefln("EOS %08x bytes=%d: %(%02x%| %)", serial, packet.bytes, packet.packet[0 .. packet.bytes]);
+					str.close(&this);
+					str.push = null;
+					str.close = null;
+				}
+
 			}
 		}
 	}
 }
 
+struct StreamType {
+	string type;
+}
+
+StreamType streamType(string t)
+{
+	return StreamType(t);
+}
+
+struct PushTee(Sink...)
+	if (allSatisfy!(isUnbufferedPushSink, Sink))
+{
+	Tuple!Sink sinks;
+	void push(string type, T)(const(T)[] buf)
+	{
+		foreach (ref sink; sinks) {
+			import std.traits : hasUDA, getUDAs;
+			if (hasUDA!(typeof(sink), StreamType) && getUDAs!(typeof(sink), StreamType)[0].type == type)
+				sink.push(buf);
+		}
+	}
+
+	void close(string tag)() {}
+}
+
+struct PushTee(Sink...)
+	if (allSatisfy!(isBufferedPushSink, Sink))
+{
+	Tuple!Sink sinks;
+	void push(string type, T)(const(T)[] inbuf)
+	{
+		foreach (ref sink; sinks) {
+			import std.traits : hasUDA, getUDAs;
+			if (!hasUDA!(typeof(sink), StreamType) && getUDAs!(typeof(sink), StreamType)[0].type == type) {
+				auto outbuf = sink.alloc(inbuf.length);
+				outbuf[] = inbuf[];
+				sink.commit(outbuf.length);
+			}
+		}
+	}
+}
+
+@streamType("audio")
 struct VorbisDecoder {
+	void open()
+	{
+	}
+
 	void push(const(ubyte)[] b)
 	{
+		writeln("audio ", b.length);
 		// discard
 	}
-}
 
-struct CurlBuffer {
-	OggReader or;
-	VorbisDecoder vd;
-
-	void init()
+	void close()
 	{
-		or.init();
+	}
+}
+static assert(isUnbufferedPushSink!VorbisDecoder);
+
+@streamType("video")
+struct TheoraDecoder {
+	void open()
+	{
 	}
 
 	void push(const(ubyte)[] b)
 	{
-		auto buf = or.alloc(b.length);
-		buf[] = b[];
-		writeln(b.length);
-		or.commit(vd, buf.length);
+		writeln("video ", b.length);
+		// discard
+	}
+
+	void close()
+	{
 	}
 }
+static assert(isUnbufferedPushSink!TheoraDecoder);
 
-version(none)
 unittest
 {
 	import std.stdio;
 	import dstreams;
 	import etc.linux.memoryerror;
 	etc.linux.memoryerror.registerMemoryErrorHandler();
-//	auto f = File("/media/epi/Passport/music/radio/uxa/rasta_banana_bonk.ogg");
+
 //	auto f = File("/media/epi/Passport/video/yt/test.ogv");
-	auto cr = curlReader("http://icecast.radiovox.org:8000/live.ogg");
-	CurlBuffer cb;
-	cb.init();
-	cr.push(cb);
+	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder, TheoraDecoder)))) source;
+	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
+	source.push();
+	/+
+	import dstreams.stream;
+	stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!CurlBuffer.pipe!OggReader.tee(
+		stream!VorbisDecoder.pipe!AlsaPcmOutput,
+		stream!TheoraDecoder.pipe!SdlVideo).run();
+
+	stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!CurlBuffer.pipe!OggReader.pipe!VorbisDecoder.pipe!AlsaPcmOutput.run();
+	+/
 }
