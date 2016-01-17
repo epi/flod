@@ -149,41 +149,39 @@ StreamType streamType(string t)
 	return StreamType(t);
 }
 
-struct PushTee(Sink...)
-	if (allSatisfy!(isUnbufferedPushSink, Sink))
+template isType(T...)
 {
-	Tuple!Sink sinks;
-	void push(string type, T)(const(T)[] buf)
-	{
-		foreach (ref sink; sinks) {
-			import std.traits : hasUDA, getUDAs;
-			if (hasUDA!(typeof(sink), StreamType) && getUDAs!(typeof(sink), StreamType)[0].type == type)
-				sink.push(buf);
-		}
-	}
-
-	void close(string tag)() {}
+	enum isType = T.length == 1 && is(T[0]);
 }
 
 struct PushTee(Sink...)
-	if (allSatisfy!(isBufferedPushSink, Sink))
+	if (allSatisfy!(isType, Sink))
 {
 	Tuple!Sink sinks;
+	void close(string tag)() {}
 	void push(string type, T)(const(T)[] inbuf)
 	{
 		foreach (ref sink; sinks) {
-			import std.traits : hasUDA, getUDAs;
-			if (!hasUDA!(typeof(sink), StreamType) && getUDAs!(typeof(sink), StreamType)[0].type == type) {
-				auto outbuf = sink.alloc(inbuf.length);
-				outbuf[] = inbuf[];
-				sink.commit(outbuf.length);
+			import std.traits : hasUDA, getUDAs, isPointer, PointerTarget;
+			static if (isPointer!(typeof(sink)))
+				alias Sk = PointerTarget!(typeof(sink));
+			else
+				alias Sk = typeof(sink);
+			if (hasUDA!(Sk, StreamType) && getUDAs!(Sk, StreamType)[0].type == type) {
+				static if (allSatisfy!(isUnbufferedPushSink, Sink)) {
+					sink.push(inbuf);
+				} else static if (allSatisfy!(isBufferedPushSink, Sink)) {
+					auto outbuf = sink.alloc(inbuf.length);
+					outbuf[] = inbuf[];
+					sink.commit(outbuf.length);
+				}
 			}
 		}
 	}
 }
 
 @streamType("audio")
-struct VorbisDecoder {
+struct VorbisDecoder(Sink) {
 	void open()
 	{
 	}
@@ -198,10 +196,10 @@ struct VorbisDecoder {
 	{
 	}
 }
-static assert(isUnbufferedPushSink!VorbisDecoder);
+//static assert(isUnbufferedPushSink!VorbisDecoder);
 
 @streamType("video")
-struct TheoraDecoder {
+struct TheoraDecoder(Sink) {
 	void open()
 	{
 	}
@@ -216,19 +214,20 @@ struct TheoraDecoder {
 	{
 	}
 }
-static assert(isUnbufferedPushSink!TheoraDecoder);
+//static assert(isUnbufferedPushSink!TheoraDecoder);
 
 unittest
 {
 	import std.stdio;
 	import dstreams;
+	import dstreams.stream : NullSink;
 	import etc.linux.memoryerror;
 	etc.linux.memoryerror.registerMemoryErrorHandler();
 
 //	auto f = File("/media/epi/Passport/video/yt/test.ogv");
-	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder, TheoraDecoder)))) source;
+	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder!NullSink, TheoraDecoder!NullSink)))) source;
 	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
-	source.push();
+//	source.push();
 	/+
 	import dstreams.stream;
 	stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!CurlBuffer.pipe!OggReader.tee(

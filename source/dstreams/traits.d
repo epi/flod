@@ -6,6 +6,15 @@
  */
 module dstreams.traits;
 
+/*
+ * Terminals:
+ * - Active (1 template argument)
+ *   push source  (must know the sink it pushes to)
+ *   pull sink    (must know the source it pulls from)
+ * - Passive (no template arguments)
+ *   pull source  (doesn't need to know anything about the sink that pulls from it)
+ *   push sink    (doesn't need to know anything about the source that pushes to it)
+ */
 version(unittest) private {
 	struct Foo {}
 	struct TestBufferedPullSource(T) {
@@ -259,25 +268,29 @@ template isStreamComponent(S...)
 ///
 template isBufferedPushSource(S...)
 {
-	enum bool isBufferedPushSource = false;
+	// TODO
+	enum bool isBufferedPushSource = __traits(isTemplate, S[0]);
 }
 
 ///
 template isBufferedPullSink(S...)
 {
-	enum bool isBufferedPullSink = false;
+	// TODO
+	enum bool isBufferedPullSink = __traits(isTemplate, S[0]);
 }
 
 ///
 template isUnbufferedPushSource(S...)
 {
-	enum isUnbufferedPushSource = false;
+	// TODO
+	enum isUnbufferedPushSource = __traits(isTemplate, S[0]);
 }
 
 ///
 template isUnbufferedPullSink(S...)
 {
-	enum isUnbufferedPullSink = false;
+	// TODO
+	enum isUnbufferedPullSink = __traits(isTemplate, S[0]);
 }
 
 ///
