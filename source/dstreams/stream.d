@@ -85,68 +85,33 @@ struct Stream(Stages...) {
 	}
 }
 
+template isStage(Ss...) {
+	static if (Ss.length == 1) {
+		alias S = Ss[0];
+		enum bool isStage = is(S == Stage!TL, TL...);
+	} else {
+		enum bool isStage = false;
+	}
+}
+
+template isStream(Ss...) {
+	static if (Ss.length == 1) {
+		alias S = Ss[0];
+		static if (is(S == Stream!TL, TL...)) {
+			import std.meta : allSatisfy;
+			enum isStream = allSatisfy!(isStage, TL);
+		}
+	} else {
+		enum isStream = false;
+	}
+}
+
 auto stream(alias Stage1, Args...)(Args args)
 {
 	auto tup = tuple(args);
 	auto stage = Stage!(Stage1, Args)(tup);
 	alias S = typeof(stage);
 	return Stream!S(tuple(stage));
-}
-
-struct Take(Sink) {
-	Sink sink = void;
-	ulong take;
-
-	this(ulong n)
-	{
-		this.take = n;
-	}
-
-	size_t push(T)(const(T[]) data)
-	{
-		if (data.length <= take) {
-			take -= data.length;
-			return sink.push(data);
-		} else {
-			import std.algorithm : min;
-			auto len = min(take, data.length);
-			if (len == 0)
-				return 0;
-			return sink.push(data[0 .. len]);
-		}
-	}
-}
-
-struct Skip(Source) {
-	Source source = void;
-	ulong skip;
-
-	this(ulong n)
-	{
-		this.skip = n;
-	}
-
-	size_t pull(T)(T[] data)
-	{
-		if (skip == 0)
-			return source.pull(data);
-		while (skip) {
-			import std.algorithm : min;
-			size_t l = min(skip, data.length);
-			size_t r = source.pull(data[0 .. l]);
-			if (r < l)
-				return 0;
-			skip -= r;
-		}
-		return source.pull(data);
-	}
-}
-
-struct NullSink
-{
-	void open() {}
-	size_t push(const(ubyte[]) buf) { return buf.length; }
-	void close() {}
 }
 
 import dstreams.traits;
@@ -328,6 +293,7 @@ unittest
 {
 	import dstreams.etc.ogg;
 	import dstreams : AlsaSink;
+	import dstreams.common : discard;
 	import std.stdio;
 	{
 		auto a = test(1337);
@@ -336,14 +302,8 @@ unittest
 	{
 		auto b = test(test(test(3), 13), 37);
 	}
-	auto stream0 = stream!NullSink;
-	pragma(msg, typeof(stream0));
-	pragma(msg, stream0.sizeof);
 
-	auto stream0b = stream!NullSink.pipe!AlsaSink;
-
-
-	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!NullSink;
+	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();
 	pragma(msg, typeof(stream1));
 	pragma(msg, stream1.sizeof);
 

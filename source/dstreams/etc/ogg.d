@@ -220,7 +220,6 @@ unittest
 {
 	import std.stdio;
 	import dstreams;
-	import dstreams.stream : NullSink;
 	import etc.linux.memoryerror;
 	etc.linux.memoryerror.registerMemoryErrorHandler();
 

@@ -69,9 +69,8 @@ struct Xor(Source) {
 	}
 }
 
-import std.stdio : File;
-
 struct FileReader {
+	import std.stdio : File;
 	File file;
 
 	this(File file)
@@ -92,6 +91,7 @@ struct FileReader {
 static assert(isUnbufferedPullSource!FileReader, Why!(FileReader).isNotUnbufferedPullSource);
 
 struct FileWriter {
+	import std.stdio : File;
 	File file;
 
 	this(File file)
@@ -159,10 +159,10 @@ import dstreams.traits;
 
 unittest
 {
-	import std.stdio;
-
-	auto s = stream!FileReader("/etc/passwd").pipe!Skip(3).pipe!PullPush.pipe!Take(3).pipe!FileWriter("ep.out");
+	import dstreams.common : take, drop, NullSource;
+	auto s = stream!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
 	s.run();
+	stream!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();
 }
 
 void test_fw()
