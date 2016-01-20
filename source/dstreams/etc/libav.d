@@ -10,7 +10,6 @@ import dstreams.etc.bindings.libavutil.file;
 import dstreams.etc.bindings.libavutil.mem;
 import dstreams.etc.bindings.libavformat.avformat;
 import dstreams.etc.bindings.libavformat.avio;
-import dstreams : FromFile;
 
 import std.exception : enforce;
 
@@ -191,9 +190,8 @@ unittest
 	//import etc.linux.memoryerror;
 	//etc.linux.memoryerror.registerMemoryErrorHandler();
 
-	import core.runtime : Runtime;
-	auto stream = stream!FromFile(File(Runtime.args[1])).pipe!AVDemux();
-
+	//import core.runtime : Runtime;
+	//auto stream = stream!FromFile(File(Runtime.args[1])).pipe!AVDemux();
 
 	/+
 	{

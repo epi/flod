@@ -13,14 +13,14 @@ import std.meta : allSatisfy;
 
 import dstreams.etc.bindings.ogg.ogg;
 import dstreams.traits : isUnbufferedPushSink, isBufferedPushSink;
-import dstreams : BufferedToUnbufferedPushSource;
+import dstreams.stream : BufferedToUnbufferedPushSource;
 
 /// buffered push sink
 /// buffered push n-source
 struct OggReader(MultiSink)
 {
-private:
 	MultiSink sink;
+private:
 	ogg_sync_state oy;
 
 	alias PushFn = void function(OggReader* self, const(ubyte)[] buf);
@@ -225,8 +225,8 @@ unittest
 	etc.linux.memoryerror.registerMemoryErrorHandler();
 
 //	auto f = File("/media/epi/Passport/video/yt/test.ogv");
-	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder!NullSink, TheoraDecoder!NullSink)))) source;
-	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
+//	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder!NullSink, TheoraDecoder!NullSink)))) source;
+//	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
 //	source.push();
 	/+
 	import dstreams.stream;

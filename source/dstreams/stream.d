@@ -6,42 +6,63 @@
  */
 module dstreams.stream;
 
-
 import std.typecons : tuple, Tuple;
+import std.stdio;
 
-import dstreams : CurlReader, BufferedToUnbufferedPushSource;
+import dstreams : CurlReader;
 
-struct Stage(alias S, Args...)
+struct Stage(alias S, A...)
 {
 	alias Impl = S;
+	alias Args = A;
 	Tuple!Args args;
 }
 
-template StreamObj(Stages...)
-{
-	static if (Stages.length == 0) {
-		alias StreamObj = void;
-	} else {
-		alias _Impl = Stages[0].Impl;
-		static if (__traits(isTemplate, _Impl)) {
-			pragma(msg, "is template: ", _Impl.stringof, " L: ", Stages[1 .. $].length);
-			static if (is(StreamObj!(Stages[1 .. $]) == void)) {
-				alias StreamObj = void;
-			} else static if (is(_Impl!(StreamObj!(Stages[1 .. $])) == struct)) {
-				alias StreamObj = _Impl!(StreamObj!(Stages[1 .. $])*);
-			} else static if (is(_Impl!(StreamObj!(Stages[1 .. $])) == class)) {
-				alias StreamObj = _Impl!(StreamObj!(Stages[1 .. $]));
+struct Stream(Stages...) {
+	Tuple!Stages stages;
+
+	private template Component(S) {
+		static if (is(S == struct))
+			alias Component = S;
+	}
+
+	private template StreamBuilder(int begin, int cur, int end) {
+		static assert(begin <= end && begin <= cur && cur <= end && end <= Stages.length,
+			"Invalid parameters: " ~
+			Stages.stringof ~ "[" ~ begin.stringof ~ "," ~ cur.stringof ~ "," ~ end.stringof ~ "]");
+		static if (cur < end) {
+			alias Cur = Stages[cur].Impl;
+			alias Lhs = StreamBuilder!(begin, begin, cur);
+			alias Rhs = StreamBuilder!(cur + 1, cur + 1, end);
+			static if (is(Component!(Lhs.Impl) _Li))
+				alias LhsImpl = _Li;
+			static if (is(Component!(Rhs.Impl) _Ri))
+				alias RhsImpl = _Ri;
+			static if (begin + 1 == end && is(Cur _Impl)) {
+				alias Impl = _Impl;
+			} else static if (cur + 1 == end && is(Cur!LhsImpl _Impl)) {
+				alias Impl = _Impl;
+			} else static if (cur == begin && is(Cur!RhsImpl _Impl)) {
+				alias Impl = _Impl;
+			} else static if (is(Cur!(LhsImpl, RhsImpl) _Impl)) {
+				alias Impl = _Impl;
 			}
-		} else static if (Stages.length == 1 && is(_Impl)) {
-			pragma(msg, "is type:     ", _Impl.stringof);
-			alias StreamObj = _Impl;
+			static if (is(Impl)) {
+				void construct(ref Impl impl) {
+					static if (is(LhsImpl))
+						Lhs.construct(impl.source);
+					static if (is(RhsImpl))
+						Rhs.construct(impl.sink);
+					static if (Stages[cur].Args.length > 0) impl.__ctor(stages[cur].args.expand);
+					writefln("%-30s %X[%d]: [%(%02x%|, %)]", Stages[cur].Impl.stringof, &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
+				}
+			} static if (cur + 1 < end) {
+				alias Next = StreamBuilder!(begin, cur + 1, end);
+				static if (is(Next.Impl))
+					alias StreamBuilder = Next;
+			}
 		}
 	}
-}
-
-struct Stream(Stages...)
-{
-	Tuple!Stages stages;
 
 	auto pipe(alias NextStage, Args...)(Args args)
 	{
@@ -50,16 +71,18 @@ struct Stream(Stages...)
 		return Stream!(Stages, S)(tuple(stages.expand, stage));
 	}
 
-	static if (!is(SOT == void)) {
-		void run()
-		{
-			import std.stdio;
-			SOT sot;
-			writeln(sot.sizeof);
-			writeln(sot);
-		}
+	void run()()
+	{
+		import std.stdio;
+		alias Builder = StreamBuilder!(0, 0, Stages.length);
+		alias Impl = Builder.Impl;
+		static assert(is(Impl), "Could not build stream out of the following list of stages: " ~ Stages.stringof);
+		Impl impl;
+		writefln("%X[%d]: [%(%02x%|, %)]", &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
+		Builder.construct(impl);
+		writeln(typeof(impl).stringof, ": ", impl.sizeof);
+		impl.run();
 	}
-	alias SOT = StreamObj!Stages;
 }
 
 auto stream(alias Stage1, Args...)(Args args)
@@ -70,11 +93,176 @@ auto stream(alias Stage1, Args...)(Args args)
 	return Stream!S(tuple(stage));
 }
 
+struct Take(Sink) {
+	Sink sink = void;
+	ulong take;
+
+	this(ulong n)
+	{
+		this.take = n;
+	}
+
+	size_t push(T)(const(T[]) data)
+	{
+		if (data.length <= take) {
+			take -= data.length;
+			return sink.push(data);
+		} else {
+			import std.algorithm : min;
+			auto len = min(take, data.length);
+			if (len == 0)
+				return 0;
+			return sink.push(data[0 .. len]);
+		}
+	}
+}
+
+struct Skip(Source) {
+	Source source = void;
+	ulong skip;
+
+	this(ulong n)
+	{
+		this.skip = n;
+	}
+
+	size_t pull(T)(T[] data)
+	{
+		if (skip == 0)
+			return source.pull(data);
+		while (skip) {
+			import std.algorithm : min;
+			size_t l = min(skip, data.length);
+			size_t r = source.pull(data[0 .. l]);
+			if (r < l)
+				return 0;
+			skip -= r;
+		}
+		return source.pull(data);
+	}
+}
+
 struct NullSink
 {
 	void open() {}
-	void push(const(ubyte[])) {}
+	size_t push(const(ubyte[]) buf) { return buf.length; }
 	void close() {}
+}
+
+import dstreams.traits;
+
+/// Convert buffered push source to unbuffered push source
+struct BufferedToUnbufferedPushSource(Sink) {
+	Sink sink;
+
+	void open()
+	{
+		sink.open();
+	}
+
+	size_t push(const(ubyte)[] b)
+	{
+		auto buf = sink.alloc(b.length);
+		buf[] = b[0 .. buf.length];
+		sink.commit(buf.length);
+		return buf.length;
+	}
+}
+
+class PushPull(Sink)
+{
+	import core.thread;
+
+	private {
+		Sink sink;
+		ubyte[] buffer;
+		size_t peekOffset;
+		size_t readOffset;
+		void[__traits(classInstanceSize, Fiber)] fiberBuf;
+
+		final @property Fiber sinkFiber() pure
+		{
+			return cast(Fiber) cast(void*) fiberBuf;
+		}
+	}
+
+	this() @trusted
+	{
+		import std.conv : emplace;
+		emplace!Fiber(fiberBuf[], &this.fiberFunc);
+	}
+
+	~this() @trusted
+	{
+		sinkFiber.__dtor();
+	}
+
+	private final void fiberFunc()
+	{
+		stderr.writefln("this in fiberFunc %d %d", peekOffset, readOffset);
+		sink.pull();
+	}
+
+	// push sink interface
+	size_t push(const(ubyte[]) data)
+	{
+		stderr.writefln("push %d bytes", data.length);
+		if (readOffset + data.length > buffer.length)
+			buffer.length = readOffset + data.length;
+		buffer[readOffset .. readOffset + data.length] = data[];
+		readOffset += data.length;
+		stderr.writefln("%d bytes available", readOffset);
+		sinkFiber.call();
+		return data.length;
+	}
+
+	// TODO: alloc+commit
+
+	// pull source interface
+	const(ubyte)[] peek(size_t size)
+	{
+		stderr.writefln("peek %d, po %d, ro %d, available %d", size, peekOffset, readOffset, readOffset - peekOffset);
+		while (peekOffset + size > readOffset)
+			Fiber.yield();
+		return buffer[peekOffset .. $];
+	}
+
+	void consume(size_t size)
+	{
+		peekOffset += size;
+		if (peekOffset == readOffset) {
+			peekOffset = 0;
+			readOffset = 0;
+		}
+	}
+
+	void pull(ubyte[] outbuf)
+	{
+		import std.algorithm : min;
+		auto inbuf = peek(outbuf.length);
+		auto l = min(inbuf.length, outbuf.length);
+		outbuf[0 .. l] = inbuf[0 .. l];
+		consume(l);
+	}
+}
+
+/** Drive a stream which doesn't have any driving components
+ */
+struct PullPush(Source, Sink) {
+	Source source = void;
+	Sink sink = void;
+
+	void run()
+	{
+		ubyte[4096] buf;
+		for (;;) {
+			size_t n = source.pull(buf[]);
+			if (n == 0)
+				break;
+			if (sink.push(buf[0 .. n]) < n)
+				break;
+		}
+	}
 }
 
 struct Test(Sink = void)
@@ -141,31 +329,33 @@ unittest
 	import dstreams.etc.ogg;
 	import dstreams : AlsaSink;
 	import std.stdio;
-
+	{
+		auto a = test(1337);
+		writefln("\n{%d}", a.a);
+	}
+	{
+		auto b = test(test(test(3), 13), 37);
+	}
 	auto stream0 = stream!NullSink;
 	pragma(msg, typeof(stream0));
 	pragma(msg, stream0.sizeof);
-	pragma(msg, "STREAM OBJECT TYPE: ", stream0.SOT.stringof);
+
+	auto stream0b = stream!NullSink.pipe!AlsaSink;
+
 
 	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!NullSink;
 	pragma(msg, typeof(stream1));
 	pragma(msg, stream1.sizeof);
-	pragma(msg, "STREAM OBJECT TYPE: ", stream1.SOT.stringof);
 
 	auto stream2a = stream!VorbisDecoder.pipe!AlsaSink;
 	pragma(msg, typeof(stream2a));
 	pragma(msg, stream2a.sizeof);
-	pragma(msg, "STREAM OBJECT TYPE: ", stream2a.SOT.stringof);
 
-	auto stream2 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg", Test!()(14)).pipe!BufferedToUnbufferedPushSource.pipe!OggReader.pipe!PushTee.pipe!VorbisDecoder.pipe!AlsaSink;
-	pragma(msg, typeof(stream2));
-	pragma(msg, stream2.sizeof);
-	pragma(msg, "STREAM OBJECT TYPE: ", stream2.SOT.stringof);
-	alias S = stream2.SOT;
-	S obj;
-	pragma(msg, typeof(obj), " SIZE=", obj.sizeof, " ", obj.init.stringof);
-	stream0.run();
+//	auto stream2 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg", Test!()(14)).pipe!BufferedToUnbufferedPushSource.pipe!OggReader.pipe!PushTee.pipe!VorbisDecoder.pipe!AlsaSink;
+//	pragma(msg, typeof(stream2));
+//	pragma(msg, stream2.sizeof);
+	//stream0.run;
 	stream1.run();
-	stream2a.run();
-	stream2.run();
+	//stream2a.run();
+	//stream2.run();
 }

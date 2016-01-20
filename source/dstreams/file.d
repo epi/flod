@@ -39,8 +39,6 @@ struct MmappedFile {
 	{
 		assert(n <= stream.length);
 		stream = stream[n .. $];
-
-		//stream = stream[min(n, stream.length) .. $];
 	}
 
 	~this() nothrow
@@ -71,26 +69,45 @@ struct Xor(Source) {
 	}
 }
 
-struct FileWriter(Source) {
-	import std.stdio : File;
-	Source source;
+import std.stdio : File;
 
+struct FileReader {
 	File file;
 
-	this(string name)
+	this(File file)
 	{
-		file = File(name, "wb");
+		this.file = file;
 	}
 
-	void pull()
+	this(in char[] name)
 	{
-		ubyte[4096] buf;
-		for (;;) {
-			size_t s = source.pull(buf[]);
-			if (s == 0)
-				break;
-			file.rawWrite(buf[0 .. s]);
-		}
+		this.file.__ctor(name, "rb");
+	}
+
+	size_t pull(ubyte[] buf)
+	{
+		return file.rawRead(buf).length;
+	}
+}
+static assert(isUnbufferedPullSource!FileReader, Why!(FileReader).isNotUnbufferedPullSource);
+
+struct FileWriter {
+	File file;
+
+	this(File file)
+	{
+		this.file = file;
+	}
+
+	this(in char[] name)
+	{
+		this.file.__ctor(name, "wb");
+	}
+
+	size_t push(const(ubyte)[] buf)
+	{
+		file.rawWrite(buf);
+		return buf.length;
 	}
 }
 
@@ -135,6 +152,17 @@ struct ByLine(Source) {
 	{
 		return line;
 	}
+}
+
+import dstreams.stream;
+import dstreams.traits;
+
+unittest
+{
+	import std.stdio;
+
+	auto s = stream!FileReader("/etc/passwd").pipe!Skip(3).pipe!PullPush.pipe!Take(3).pipe!FileWriter("ep.out");
+	s.run();
 }
 
 void test_fw()

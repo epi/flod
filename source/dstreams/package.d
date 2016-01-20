@@ -189,22 +189,6 @@ struct FromArray(T)
 
 auto fromArray(T)(const(T[]) array) { return FromArray!T(array); }
 
-struct FromFile
-{
-	File file;
-	this(File f)
-	{
-		file = f;
-	}
-
-	size_t pull(ubyte[] buf)
-	{
-		return file.rawRead(buf).length;
-	}
-}
-
-auto fromFile(File f) { return FromFile(f); }
-
 struct PullBuffer(Source, T)
 {
 	pragma(msg, "PullBuffer: ", typeof(Source.init).stringof, ", ", T.stringof);
@@ -473,14 +457,19 @@ struct CurlReader(Sink)
 	static size_t mywrite(const(void)* buf, size_t ms, size_t nm, void* obj)
 	{
 		CurlReader* self = cast(CurlReader*) obj;
+		size_t written;
 		try {
 			stderr.writefln("mywrite %s %s", ms, nm);
-			self.sink.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
+			written = self.sink.push((cast(const(ubyte)*) buf)[0 .. ms * nm]);
 		} catch (Throwable e) {
 			self.e = e;
-			return 0;
 		}
-		return ms * nm;
+		return written;
+	}
+
+	void run()
+	{
+		push();
 	}
 
 	void push()
@@ -496,81 +485,6 @@ struct CurlReader(Sink)
 		curl_easy_cleanup(curl);
 		if (e)
 			throw e;
-	}
-}
-
-/// Convert buffered push source to unbuffered push source
-struct BufferedToUnbufferedPushSource(Sink) {
-	Sink sink;
-
-	void open()
-	{
-		sink.open();
-	}
-
-	void push(const(ubyte)[] b)
-	{
-		auto buf = sink.alloc(b.length);
-		buf[] = b[];
-		writeln(b.length);
-		sink.commit(buf.length);
-	}
-}
-
-class PushToPullBuffer(Sink, ItsSink)
-{
-	import core.thread;
-
-	private {
-		Sink sink;
-		ItsSink itsSink;
-		ubyte[] buffer;
-		size_t peekOffset;
-		size_t readOffset;
-		Fiber sinkFiber;
-	}
-
-	this(Sink sink, ItsSink itsSink) {
-		this.sink = sink;
-		this.itsSink = itsSink;
-		stderr.writefln("this in ctor %d %d", peekOffset, readOffset);
-		sinkFiber = new Fiber(&this.fiberFunc);
-	}
-
-	private void fiberFunc()
-	{
-		stderr.writefln("this in fiberFunc %d %d", peekOffset, readOffset);
-		sink.process(this, itsSink);
-	}
-
-	// push sink interface
-	void push(const(ubyte[]) data)
-	{
-		stderr.writefln("push %d bytes", data.length);
-		if (readOffset + data.length > buffer.length)
-			buffer.length = readOffset + data.length;
-		buffer[readOffset .. readOffset + data.length] = data[];
-		readOffset += data.length;
-		stderr.writefln("%d bytes available", readOffset);
-		sinkFiber.call();
-	}
-
-	// pull source interface
-	const(ubyte)[] peek(size_t size)
-	{
-		stderr.writefln("peek %d, po %d, ro %d, available %d", size, peekOffset, readOffset, readOffset - peekOffset);
-		while (peekOffset + size > readOffset)
-			Fiber.yield();
-		return buffer[peekOffset .. $];
-	}
-
-	void consume(size_t size)
-	{
-		peekOffset += size;
-		if (peekOffset == readOffset) {
-			peekOffset = 0;
-			readOffset = 0;
-		}
 	}
 }
 
