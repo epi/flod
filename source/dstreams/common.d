@@ -70,7 +70,7 @@ struct Drop(Source) {
 		return source.pull(data);
 	}
 
-	auto peek(size_t n)
+	auto peek()(size_t n)
 	{
 		while (skip) {
 			import std.algorithm : min;
@@ -84,7 +84,7 @@ struct Drop(Source) {
 		return source.peek(n);
 	}
 
-	void consume(size_t n)
+	void consume()(size_t n)
 	{
 		source.consume(n);
 	}

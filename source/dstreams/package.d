@@ -61,39 +61,35 @@ auto alsaSink(uint channels, uint samplesPerSec, uint bitsPerSample)
 }
 
 /* -> pull source, push sink -> */
-struct MadDecoder
+struct MadDecoder(Source, Sink)
 {
-	import dstreams.etc.bindings.mad;
-
-	private struct SoSi(Source, Sink)
-	{
-		Source source;
-		Sink sink;
-		const(void)* bufferStart = null;
-		Throwable exception;
-	}
+	import deimos.mad;
+	Source source;
+	Sink sink;
+	const(void)* bufferStart = null;
+	Throwable exception;
 
 	private extern(C)
-	static MadFlow input(Source, Sink)(void* data, mad_stream* stream)
+	static mad_flow input(void* data, mad_stream* stream)
 	{
-		auto sosi = cast(SoSi!(Source, Sink)*) data;
+		auto self = cast(MadDecoder*) data;
 		try {
-			if (sosi.bufferStart !is null) {
-				size_t cons = stream.this_frame - sosi.bufferStart;
+			if (self.bufferStart !is null) {
+				size_t cons = stream.this_frame - self.bufferStart;
 				if (cons == 0)
-					return MadFlow.stop;
-				sosi.source.consume(cons);
+					return mad_flow.STOP;
+				self.source.consume(cons);
 			}
-			auto buf = sosi.source.peek(4096);
+			auto buf = self.source.peek(4096);
 			if (!buf.length)
-				return MadFlow.stop;
-			sosi.bufferStart = buf.ptr;
+				return mad_flow.STOP;
+			self.bufferStart = buf.ptr;
 			mad_stream_buffer(stream, buf.ptr, buf.length);
-			return MadFlow.continue_;
+			return mad_flow.CONTINUE;
 		}
 		catch (Throwable e) {
-			sosi.exception = e;
-			return MadFlow.break_;
+			self.exception = e;
+			return mad_flow.BREAK;
 		}
 	}
 
@@ -113,9 +109,9 @@ struct MadDecoder
 	}
 
 	private extern(C)
-	static MadFlow output(Source, Sink)(void* data, const(MadHeader)* header, MadPcm* pcm)
+	static mad_flow output(void* data, const(mad_header)* header, mad_pcm* pcm)
 	{
-		auto sosi = cast(SoSi!(Source, Sink)*) data;
+		auto self = cast(MadDecoder*) data;
 		uint nchannels, nsamples;
 		const(mad_fixed_t)* left_ch;
 		const(mad_fixed_t)* right_ch;
@@ -127,7 +123,8 @@ struct MadDecoder
 
 		if (nsamples > 0) {
 			size_t size = short.sizeof * nchannels * nsamples;
-			auto buf = sosi.sink.alloc(size);
+			auto buf = new ubyte[size];
+			//auto buf = self.sink.alloc(size);
 			size_t i = 0;
 			while (nsamples--) {
 				int sample = scale(*left_ch++);
@@ -139,36 +136,36 @@ struct MadDecoder
 					buf[i++] = (sample >> 8) & 0xff;
 				}
 			}
-			sosi.sink.commit(size);
+			self.sink.push(buf);
+			//self.sink.commit(size);
 		}
-		return MadFlow.continue_;
+		return mad_flow.CONTINUE;
 	}
 
 	private extern(C)
-	static MadFlow error(Source, Sink)(void* data, mad_stream* stream, mad_frame* frame)
+	static mad_flow error(void* data, mad_stream* stream, mad_frame* frame)
 	{
-		return MadFlow.continue_;
+		return mad_flow.CONTINUE;
 	}
 
-	void process(Source, Sink)(Source source, Sink sink)
+	void run()
 	{
-		MadDecoder decoder;
-		auto sosi = SoSi!(Source, Sink)(source, sink);
-		mad_decoder_init(&decoder, &sosi,
-			&input!(Source, Sink), null /* header */, null /* filter */,
-			&output!(Source, Sink), &error!(Source, Sink), null /* message */);
+		// TODO: why is this reference 0ed after mad_decoder_init?
+		auto md = &this;
+		mad_decoder decoder;
+		mad_decoder_init(&decoder, cast(void*) md,
+			&input, null /* header */, null /* filter */,
+			&output, &error, null /* message */);
 
 		/* start decoding */
-		auto result = mad_decoder_run(&decoder, MadDecoderMode.sync);
+		auto result = mad_decoder_run(&decoder, mad_decoder_mode.SYNC);
 
 		/* release the decoder */
 		mad_decoder_finish(&decoder);
-		if (sosi.exception)
-			throw sosi.exception;
+		if (md.exception)
+			throw md.exception;
 	}
 }
-
-auto madDecoder() { return MadDecoder(); }
 
 struct FromArray(T)
 {
@@ -468,11 +465,6 @@ struct CurlReader(Sink)
 	}
 
 	void run()
-	{
-		push();
-	}
-
-	void push()
 	{
 		CURL* curl = enforce(curl_easy_init(), "failed to init curl");
 		curl_easy_setopt(curl, CurlOption.url, url);

@@ -227,7 +227,7 @@ unittest
 //	auto f = File("/media/epi/Passport/video/yt/test.ogv");
 	CurlReader!(BufferedToUnbufferedPushSource!(OggReader!(PushTee!(VorbisDecoder!NullSink, TheoraDecoder!NullSink)))) source;
 //	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
-	source.push();
+	source.run();
 	/+
 	import dstreams.stream;
 	stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!CurlBuffer.pipe!OggReader.tee(

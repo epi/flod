@@ -5,4 +5,4 @@ authors "Adrian Matoga"
 // Required because MAD is GPLed.
 license "GPL-2.0"
 dependency "dstreams" version="*" path="../.."
-libs "mad" "asound" "curl"
+libs "asound" "curl"

@@ -44,7 +44,7 @@ struct MmappedFile {
 	~this() nothrow
 	{
 		if (mmfile.ptr)
-		munmap(cast(void*) mmfile.ptr, mmfile.length);
+			munmap(cast(void*) mmfile.ptr, mmfile.length);
 	}
 }
 
