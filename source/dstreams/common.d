@@ -69,6 +69,25 @@ struct Drop(Source) {
 		}
 		return source.pull(data);
 	}
+
+	auto peek(size_t n)
+	{
+		while (skip) {
+			import std.algorithm : min;
+			auto data = source.peek(n);
+			if (data.length == 0)
+				return data;
+			auto len = min(skip, data.length);
+			source.consume(len);
+			skip -= len;
+		}
+		return source.peek(n);
+	}
+
+	void consume(size_t n)
+	{
+		source.consume(n);
+	}
 }
 
 /// _Drop the initial n elements from stream and forward the remaining part unchanged.
