@@ -8,7 +8,7 @@ module dstreams.etc.bindings.vorbis.codec;
 
 import core.stdc.config : c_long;
 
-import dstreams.etc.bindings.ogg.ogg : ogg_packet, oggpack_buffer;
+import deimos.ogg.ogg : ogg_packet, oggpack_buffer;
 
 ///
 struct vorbis_info {
