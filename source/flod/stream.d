@@ -296,7 +296,6 @@ auto test(T...)(T a)
 unittest
 {
 	import flod.etc.ogg;
-	import flod : AlsaSink;
 	import flod.common : discard;
 	import std.stdio;
 	{
@@ -310,10 +309,6 @@ unittest
 	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();
 	pragma(msg, typeof(stream1));
 	pragma(msg, stream1.sizeof);
-
-	auto stream2a = stream!VorbisDecoder.pipe!AlsaSink;
-	pragma(msg, typeof(stream2a));
-	pragma(msg, stream2a.sizeof);
 
 //	auto stream2 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg", Test!()(14)).pipe!BufferedToUnbufferedPushSource.pipe!OggReader.pipe!PushTee.pipe!VorbisDecoder.pipe!AlsaSink;
 //	pragma(msg, typeof(stream2));
