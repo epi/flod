@@ -9,17 +9,17 @@ module dstreams;
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 
 struct AlsaSink {
-	import dstreams.etc.bindings.alsa.pcm;
+	import deimos.alsa.pcm;
 	import std.string : toStringz;
 
 	this(uint channels, uint samplesPerSec, uint bitsPerSample)
 	{
 		int err;
-		if ((err = snd_pcm_open(&hpcm, "default".toStringz(), snd_pcm_stream_t.SND_PCM_STREAM_PLAYBACK, 0)) < 0)
+		if ((err = snd_pcm_open(&hpcm, "default".toStringz(), snd_pcm_stream_t.PLAYBACK, 0)) < 0)
 			throw new Exception("Cannot open default audio device");
 		if ((err = snd_pcm_set_params(
-			hpcm, bitsPerSample == 8 ? snd_pcm_format_t.SND_PCM_FORMAT_U8 : snd_pcm_format_t.SND_PCM_FORMAT_S16_LE,
-			snd_pcm_access_t.SND_PCM_ACCESS_RW_INTERLEAVED,
+			hpcm, bitsPerSample == 8 ? snd_pcm_format_t.U8 : snd_pcm_format_t.S16_LE,
+			snd_pcm_access_t.RW_INTERLEAVED,
 			channels, samplesPerSec, 1, 50000)) < 0) {
 			close();
 			throw new Exception("Cannot set audio device params");
