@@ -386,13 +386,13 @@ struct ToFile
 /* pull sink, push source */
 struct RabbitStage
 {
-	import dstreams.etc.bindings.samplerate;
+	import deimos.samplerate;
 
 	SRC_STATE *state;
 	int channels;
 	double ratio;
 
-	this(SRC_TYPE type, int channels, double ratio)
+	this(int type, int channels, double ratio)
 	{
 		int error;
 		state = src_new(type, channels, &error);
