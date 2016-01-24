@@ -1,10 +1,9 @@
 import std.exception : enforce;
 
 import flod.etc.alsa;
-import flod : MadDecoder;
+import flod.etc.mad;
 import flod.file : MmappedFile;
 import flod.stream : stream;
-import flod.common : drop;
 
 int main(string[] args)
 {
