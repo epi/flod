@@ -9,8 +9,8 @@ module dstreams.etc.libav;
 import deimos.libavutil.file;
 import deimos.libavutil.mem;
 
-import dstreams.etc.bindings.libavformat.avformat;
-import dstreams.etc.bindings.libavformat.avio;
+import deimos.libavformat.avformat;
+import deimos.libavformat.avio;
 
 import std.exception : enforce;
 
