@@ -9,8 +9,6 @@ module flod.stream;
 import std.typecons : tuple, Tuple;
 import std.stdio;
 
-import flod : CurlReader;
-
 struct Stage(alias S, A...)
 {
 	alias Impl = S;
@@ -306,15 +304,16 @@ unittest
 		auto b = test(test(test(3), 13), 37);
 	}
 
-	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();
-	pragma(msg, typeof(stream1));
-	pragma(msg, stream1.sizeof);
+//	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();
+//	pragma(msg, typeof(stream1));
+//	pragma(msg, stream1.sizeof);
+
 
 //	auto stream2 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg", Test!()(14)).pipe!BufferedToUnbufferedPushSource.pipe!OggReader.pipe!PushTee.pipe!VorbisDecoder.pipe!AlsaSink;
 //	pragma(msg, typeof(stream2));
 //	pragma(msg, stream2.sizeof);
 	//stream0.run;
-	stream1.run();
+	//stream1.run();
 	//stream2a.run();
 	//stream2.run();
 }
