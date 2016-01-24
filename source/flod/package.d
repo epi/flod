@@ -1,10 +1,10 @@
-/** Top-level dstreams module. Provides the most commonly used stuff.
+/** Top-level flod module. Provides the most commonly used stuff.
  *
  *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
  *  Copyright: © 2016 Adrian Matoga
  *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
-module dstreams;
+module flod;
 
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 
@@ -317,7 +317,7 @@ struct CompactPullBuffer(Source, T = SourceDataType!Sink)
 
 	private int createFile()
 	{
-		static immutable path = "/dev/shm/dstreams-CompactPullBuffer-XXXXXX";
+		static immutable path = "/dev/shm/flod-CompactPullBuffer-XXXXXX";
 		char[path.length + 1] mutablePath = path.ptr[0 .. path.length + 1];
 		int fd = mkstemp(mutablePath.ptr);
 		enforce(fd >= 0, "Failed to create shm file");

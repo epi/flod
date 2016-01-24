@@ -4,7 +4,7 @@
  * Copyright: © 2016 Adrian Matoga
  * License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0)
  */
-module dstreams.etc.libav;
+module flod.etc.libav;
 
 import deimos.libavutil.file;
 import deimos.libavutil.mem;
@@ -191,7 +191,7 @@ unittest
 	import etc.linux.memoryerror;
 	etc.linux.memoryerror.registerMemoryErrorHandler();
 
-	import dstreams.file;
+	import flod.file;
 	import core.runtime : Runtime;
 	auto stream = stream!FileReader(File(Runtime.args[1])).pipe!AVDemux();
 

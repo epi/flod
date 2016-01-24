@@ -4,12 +4,12 @@
  *  Copyright: © 2016 Adrian Matoga
  *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
-module dstreams.stream;
+module flod.stream;
 
 import std.typecons : tuple, Tuple;
 import std.stdio;
 
-import dstreams : CurlReader;
+import flod : CurlReader;
 
 struct Stage(alias S, A...)
 {
@@ -40,12 +40,16 @@ struct Stream(Stages...) {
 				alias RhsImpl = _Ri;
 			static if (begin + 1 == end && is(Cur _Impl)) {
 				alias Impl = _Impl;
+				pragma(msg, "Match: ", Stages[begin]);
 			} else static if (cur + 1 == end && is(Cur!LhsImpl _Impl)) {
 				alias Impl = _Impl;
+				pragma(msg, "Match: ", Stages[cur .. end]);
 			} else static if (cur == begin && is(Cur!RhsImpl _Impl)) {
 				alias Impl = _Impl;
+				pragma(msg, "Match: ", Stages[begin .. cur + 1]);
 			} else static if (is(Cur!(LhsImpl, RhsImpl) _Impl)) {
 				alias Impl = _Impl;
+				pragma(msg, "Match: ", Stages[begin .. end]);
 			}
 			static if (is(Impl)) {
 				void construct(ref Impl impl) {
@@ -114,7 +118,7 @@ auto stream(alias Stage1, Args...)(Args args)
 	return Stream!S(tuple(stage));
 }
 
-import dstreams.traits;
+import flod.traits;
 
 /// Convert buffered push source to unbuffered push source
 struct BufferedToUnbufferedPushSource(Sink) {
@@ -291,9 +295,9 @@ auto test(T...)(T a)
 
 unittest
 {
-	import dstreams.etc.ogg;
-	import dstreams : AlsaSink;
-	import dstreams.common : discard;
+	import flod.etc.ogg;
+	import flod : AlsaSink;
+	import flod.common : discard;
 	import std.stdio;
 	{
 		auto a = test(1337);

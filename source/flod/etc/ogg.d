@@ -4,7 +4,7 @@
  * Copyright: © 2016 Adrian Matoga
  * License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0)
  */
-module dstreams.etc.ogg;
+module flod.etc.ogg;
 
 import std.exception : enforce;
 import std.stdio;
@@ -12,8 +12,8 @@ import std.typecons : Tuple, tuple;
 import std.meta : allSatisfy;
 
 import deimos.ogg.ogg;
-import dstreams.traits : isUnbufferedPushSink, isBufferedPushSink;
-import dstreams.stream : BufferedToUnbufferedPushSource;
+import flod.traits : isUnbufferedPushSink, isBufferedPushSink;
+import flod.stream : BufferedToUnbufferedPushSource;
 
 /// buffered push sink
 /// buffered push n-source
@@ -219,9 +219,9 @@ struct TheoraDecoder(Sink) {
 unittest
 {
 	import std.stdio;
-	import dstreams;
+	import flod;
 	import etc.linux.memoryerror;
-	import dstreams.common : NullSink;
+	import flod.common : NullSink;
 	etc.linux.memoryerror.registerMemoryErrorHandler();
 
 //	auto f = File("/media/epi/Passport/video/yt/test.ogv");
@@ -229,7 +229,7 @@ unittest
 //	source.open("file:///home/epi/export.ogg"); //"http://icecast.radiovox.org:8000/live.ogg");
 	source.run();
 	/+
-	import dstreams.stream;
+	import flod.stream;
 	stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").pipe!CurlBuffer.pipe!OggReader.tee(
 		stream!VorbisDecoder.pipe!AlsaPcmOutput,
 		stream!TheoraDecoder.pipe!SdlVideo).run();

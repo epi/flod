@@ -4,7 +4,7 @@
  *  Copyright: © 2016 Adrian Matoga
  *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
-module dstreams.file;
+module flod.file;
 
 struct MmappedFile {
 	import std.string : toStringz;
@@ -154,12 +154,12 @@ struct ByLine(Source) {
 	}
 }
 
-import dstreams.stream;
-import dstreams.traits;
+import flod.stream;
+import flod.traits;
 
 unittest
 {
-	import dstreams.common : take, drop, NullSource;
+	import flod.common : take, drop, NullSource;
 	auto s = stream!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
 	s.run();
 	stream!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();

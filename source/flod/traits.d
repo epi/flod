@@ -4,7 +4,7 @@
  *  Copyright: © 2016 Adrian Matoga
  *  License: $(LINK2 http://boost.org/LICENSE_1_0.txt, Boost License 1.0).
  */
-module dstreams.traits;
+module flod.traits;
 
 
 /*

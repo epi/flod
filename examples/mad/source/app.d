@@ -1,9 +1,9 @@
 import std.exception : enforce;
 
-import dstreams : AlsaSink, MadDecoder;
-import dstreams.file : MmappedFile;
-import dstreams.stream : stream;
-import dstreams.common : drop;
+import flod : AlsaSink, MadDecoder;
+import flod.file : MmappedFile;
+import flod.stream : stream;
+import flod.common : drop;
 
 int main(string[] args)
 {

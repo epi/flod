@@ -1,5 +1,5 @@
-name "dstreams"
-description "A minimal D application."
+name "flod"
+description "Another I/O and multimedia streaming library."
 copyright "Copyright © 2016, Adrian Matoga"
 authors "Adrian Matoga"
 targetType "library"

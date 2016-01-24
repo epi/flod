@@ -4,9 +4,9 @@
  *  Copyright: © 2016 Adrian Matoga
  *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
-module dstreams.common;
+module flod.common;
 
-import dstreams.stream : isStream;
+import flod.stream : isStream;
 
 /** A filter which truncates the stream after reading the specified number elements
  *  or the entire stream, whichever comes first.
@@ -123,7 +123,7 @@ struct NullSource {
 
 unittest
 {
-	import dstreams.stream : stream, PullPush;
+	import flod.stream : stream, PullPush;
 
 	stream!NullSource.pipe!PullPush.discard().run(); // do nothing
 	stream!NullSource.pipe!PullPush.pipe!NullSink().run(); // also do nothing
