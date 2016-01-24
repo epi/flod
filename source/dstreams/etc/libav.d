@@ -6,8 +6,9 @@
  */
 module dstreams.etc.libav;
 
-import dstreams.etc.bindings.libavutil.file;
-import dstreams.etc.bindings.libavutil.mem;
+import deimos.libavutil.file;
+import deimos.libavutil.mem;
+
 import dstreams.etc.bindings.libavformat.avformat;
 import dstreams.etc.bindings.libavformat.avio;
 
@@ -185,13 +186,14 @@ auto stream(alias Src, T...)(T args)
 
 unittest
 {
-	//auto amf = AVMappedFile("dub.sdl");
+	auto amf = AVMappedFile("dub.sdl");
 
-	//import etc.linux.memoryerror;
-	//etc.linux.memoryerror.registerMemoryErrorHandler();
+	import etc.linux.memoryerror;
+	etc.linux.memoryerror.registerMemoryErrorHandler();
 
-	//import core.runtime : Runtime;
-	//auto stream = stream!FromFile(File(Runtime.args[1])).pipe!AVDemux();
+	import dstreams.file;
+	import core.runtime : Runtime;
+	auto stream = stream!FileReader(File(Runtime.args[1])).pipe!AVDemux();
 
 	/+
 	{
