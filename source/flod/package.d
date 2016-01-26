@@ -224,50 +224,6 @@ struct ToFile
 	}
 }
 
-/* pull sink, push source */
-struct RabbitStage
-{
-	import deimos.samplerate;
-
-	SRC_STATE *state;
-	int channels;
-	double ratio;
-
-	this(int type, int channels, double ratio)
-	{
-		int error;
-		state = src_new(type, channels, &error);
-		this.channels = channels;
-		this.ratio = ratio;
-	}
-
-	void finalize()
-	{
-		src_delete(state);
-	}
-
-	void process(Source, Sink)(Source source, Sink sink)
-	{
-		SRC_DATA data;
-
-		auto inbuf = source.peek(channels);
-		auto outbuf = sink.alloc(channels);
-
-		data.data_in = inbuf.ptr;
-		data.data_out = outbuf.ptr;
-		data.input_frames = inbuf.length / channels;
-		data.output_frames = outbuf.length / channels;
-
-		data.end_of_input = inbuf.length < channels * float.sizeof;
-
-		data.src_ratio = ratio;
-
-		src_process(state, &data);
-
-		source.consume(data.input_frames_used * channels);
-		sink.commit(data.output_frames_used * channels);
-	}
-}
 
 enum isSource(T) = true;
 enum isSink(T) = false;
