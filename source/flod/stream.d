@@ -293,7 +293,6 @@ auto test(T...)(T a)
 
 unittest
 {
-	import flod.etc.ogg;
 	import flod.common : discard;
 	import std.stdio;
 	{
