@@ -497,19 +497,21 @@ unittest
 
 /// Returns `true` if `Ss` is a source which writes data by calling `alloc()` and `commit()`.
 template isAllocSource(Ss...) {
-	static if (Ss.length != 1) {
-		enum bool isAllocSource = false;
-	} else {
-		alias S = Ss[0];
-		enum bool impl =
-			   onlyValidFor!(canRun,   S, DummyAllocSink)
-			|| onlyValidFor!(canStep,  S, DummyAllocSink)
-			|| onlyValidFor!(canPush,  S, DummyAllocSink)
-			|| onlyValidFor!(canAlloc, S, DummyAllocSink)
-			|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyAllocSink)
-			|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyAllocSink)
-			|| onlyValidFor!(canRun,   S, DummyPullSource, DummyAllocSink)
-			|| onlyValidFor!(canStep,  S, DummyPullSource, DummyAllocSink);
+	template impl() {
+		static if (Ss.length != 1) {
+			enum bool isAllocSource = false;
+		} else {
+			alias S = Ss[0];
+			enum bool impl =
+				   onlyValidFor!(canRun,   S, DummyAllocSink)
+				|| onlyValidFor!(canStep,  S, DummyAllocSink)
+				|| onlyValidFor!(canPush,  S, DummyAllocSink)
+				|| onlyValidFor!(canAlloc, S, DummyAllocSink)
+				|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyAllocSink)
+				|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyAllocSink)
+				|| onlyValidFor!(canRun,   S, DummyPullSource, DummyAllocSink)
+				|| onlyValidFor!(canStep,  S, DummyPullSource, DummyAllocSink);
+		}
 	}
 	enum bool isAllocSource = impl!();
 }
@@ -677,7 +679,17 @@ template isSource(Ss...) {
 	enum isSource = isPeekSource!Ss || isPullSource!Ss || isAllocSource!Ss || isPushSource!Ss;
 }
 
-/// Returns `true` if `Ss` is a source of any kind.
+/// Returns `true` if `Ss` is a sink of any kind.
 template isSink(Ss...) {
 	enum isSink = isPeekSink!Ss || isPullSink!Ss || isAllocSink!Ss || isPushSink!Ss;
+}
+
+/// Returns `true` if `Ss` is a source but not a sink.
+template isSourceOnly(Ss...) {
+	enum isSourceOnly = isSource!Ss && !isSink!Ss;
+}
+
+/// Returns `true` if `Ss` is a sink but not a source.
+template isSinkOnly(Ss...) {
+	enum isSinkOnly = !isSource!Ss && isSink!Ss;
 }
