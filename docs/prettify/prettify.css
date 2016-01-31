@@ -4,6 +4,10 @@
 .pln { color: #222 }  /* plain text */
 pre .pln { color: #000 }  /* plain text */
 
+code {
+	font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
+}
+
 pre {
 	font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
     white-space: pre-wrap;       /* CSS 3 */
