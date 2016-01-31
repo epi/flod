@@ -6,6 +6,9 @@
  */
 module flod.file;
 
+import flod.stream;
+import flod.traits;
+
 struct MmappedFile {
 	import std.string : toStringz;
 	import std.exception : enforce;
@@ -47,6 +50,7 @@ struct MmappedFile {
 			munmap(cast(void*) mmfile.ptr, mmfile.length);
 	}
 }
+static assert(isPeekSource!MmappedFile);
 
 struct Xor(Source) {
 	Source source;
@@ -88,7 +92,7 @@ struct FileReader {
 		return file.rawRead(buf).length;
 	}
 }
-static assert(isUnbufferedPullSource!FileReader, Why!(FileReader).isNotUnbufferedPullSource);
+static assert(isPullSource!FileReader);
 
 struct FileWriter {
 	import std.stdio : File;
@@ -110,6 +114,7 @@ struct FileWriter {
 		return buf.length;
 	}
 }
+static assert(isPushSink!FileWriter);
 
 struct ByLine(Source) {
 	Source source;
@@ -153,9 +158,6 @@ struct ByLine(Source) {
 		return line;
 	}
 }
-
-import flod.stream;
-import flod.traits;
 
 unittest
 {
