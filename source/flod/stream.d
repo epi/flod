@@ -1,4 +1,4 @@
-/** Templates which link the stream components together.
+/** Templates which link _stream components together.
  *
  *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
  *  Copyright: © 2016 Adrian Matoga
@@ -6,22 +6,182 @@
  */
 module flod.stream;
 
-import std.typecons : tuple, Tuple;
 import std.stdio;
 
-struct Stage(alias S, A...)
-{
-	alias Impl = S;
-	alias Args = A;
-	Tuple!Args args;
+import std.meta : staticMap, Filter, allSatisfy;
+
+import std.experimental.allocator : IAllocator;
+
+import flod.traits;
+
+// Stage holds the information required to construct a stream component.
+private struct Stage(alias C, ArgsList...) if (isStreamComponent!C) {
+	/// The actual stream component type or template alias
+	alias Impl = C;
+	alias Args = ArgsList;
+	// Arguments passed to stream component's ctor
+	Args args;
 }
 
-struct Stream(Stages...) {
-	Tuple!Stages stages;
+private template isStage(Ss...) {
+	static if (Ss.length == 1) {
+		alias S = Ss[0];
+		enum bool isStage = is(S == Stage!TL, TL...);
+	} else {
+		enum bool isStage = false;
+	}
+}
 
-	private template Component(S) {
-		static if (is(S == struct))
-			alias Component = S;
+private template hasCtorArgs(S) if (isStage!S) {
+	enum bool hasCtorArgs = S.Args.length > 0;
+}
+
+private template staticSum(x...) {
+	static if (x.length == 0)
+		enum staticSum = 0;
+	else
+		enum staticSum = x[0] + staticSum!(x[1 .. $]);
+}
+
+private template streamDescription(Stages...)
+	if (allSatisfy!(isStage, Stages)) {
+	static if (Stages.length == 0) {
+		enum string streamDescription = "(empty)";
+	} else static if (Stages.length == 1) {
+		enum string streamDescription = __traits(identifier, Stages[0].Impl);
+	} else {
+		enum string streamDescription = __traits(identifier, Stages[0].Impl)
+			~ "->" ~ streamDescription!(Stages[1 .. $]);
+	}
+}
+
+// StageTuple stores only stages that have some args passed to their ctors
+// tupleIndex converts the index in the list of all Stages to
+// an index in the compressed list.
+private template tupleIndex(int index, Stages...) {
+	enum tupleIndex = staticSum!(staticMap!(hasCtorArgs, Stages)[0 .. index]);
+}
+
+// dynamically allocated tuple of stages
+// quite hacky, void ptrs are cast there and back in Stream
+private struct StageTuple {
+	IAllocator allocator;
+	uint refs = 1;
+	void function(StageTuple* p) free;
+	void*[] stages;
+}
+
+private void freeStages(Stages...)(StageTuple* p)
+	if (allSatisfy!(hasCtorArgs, Stages))
+{
+	import std.experimental.allocator : dispose;
+
+	static if (Stages.length > 0) {
+		// dispose last stage spec
+		enum index = Stages.length - 1;
+		alias Disposed = Stages[index];
+		p.allocator.dispose(cast(Disposed*) p.stages[index]);
+		// and then the rest, recursively
+		freeStages!(Stages[0 .. $ - 1])(p);
+	}
+}
+
+/** Stream specification. Holds all information necessary to instantiate and _run a _stream.
+ *
+ * `Stream`s cannot be created directly. Instead, free functions `stream` and `streamAllocator`
+ * should be used.
+ */
+struct Stream(Stages...) if (Stages.length > 0 && allSatisfy!(isStage, Stages)) {
+
+	import std.experimental.allocator : make, makeArray, expandArray, dispose, allocatorObject;
+
+	alias AllStages = Stages;
+	alias StagesWithCtorArgs = Filter!(hasCtorArgs, Stages);
+
+	enum firstStageName = __traits(identifier, Stages[0].Impl);
+	enum lastStageName = __traits(identifier, Stages[$ - 1].Impl);
+
+	alias FirstStage = Stages[0].Impl;
+	alias LastStage = Stages[$ - 1].Impl;
+
+	enum isInputStream = isSourceOnly!(Stages[0].Impl) && isSource!(Stages[$ - 1].Impl);
+	enum isOutputStream = isSink!(Stages[0].Impl) && isSinkOnly!(Stages[$ - 1].Impl);
+	enum isCompleteStream = isSourceOnly!(Stages[0].Impl) && isSinkOnly!(Stages[$ - 1].Impl);
+	enum string staticToString = streamDescription!Stages;
+
+	// Reference-counted storage for arguments passed to constructors of each stage
+	private StageTuple* _res; // TODO: rename to _stageTuple
+
+	static if (Stages.length == 1) {
+		private this(Args...)(IAllocator allocator, auto ref Args args)
+		{
+			_res = allocator.make!StageTuple;
+			assert(_res);
+			assert(_res.refs == 1);
+			_res.allocator = allocator;
+			_res.stages = _res.allocator.makeArray!(void*)(4);
+			static if (hasCtorArgs!(Stages[0])) {
+				assert(_res.stages[0] is null);
+				_res.stages[0] = _res.allocator.make!(Stages[0])(args);
+			}
+			_res.free = &freeStages!StagesWithCtorArgs;
+		}
+	} else static if (Stages.length > 1) {
+		private this(Args...)(StageTuple* st, auto ref Args args)
+		{
+			assert(st);
+			assert(st.refs);
+			_res = st;
+			static if (hasCtorArgs!(Stages[$ - 1])) {
+				if (_res.stages.length < StagesWithCtorArgs.length) {
+					_res.allocator.expandArray(_res.stages, 4);
+					import std.exception : enforce;
+					enforce(_res.stages.length >= StagesWithCtorArgs.length,
+						"Failed to expand the list of stages: out of memory");
+				}
+				enum index = StagesWithCtorArgs.length - 1;
+				assert(_res.stages[index] is null);
+				_res.stages[index] = _res.allocator.make!(StagesWithCtorArgs[index])(args);
+				_res.free = &freeStages!StagesWithCtorArgs;
+			}
+			_res.refs++;
+		}
+	}
+
+	this(this)
+	{
+		if (!_res)
+			return;
+		assert(_res.refs);
+		_res.refs++;
+	}
+
+	void opAssign(Stream rhs)
+	{
+		import std.algorithm : swap;
+		swap(this, rhs);
+	}
+
+	~this()
+	{
+		if (!_res)
+			return;
+		assert(_res.refs >= 1);
+		if (_res.refs == 1) {
+			_res.free(_res);
+			_res.refs = 0;
+			auto allocator = _res.allocator;
+			allocator.dispose(_res.stages);
+			allocator.dispose(_res);
+			_res = null;
+		} else {
+			_res.refs--;
+			assert(_res.refs);
+		}
+	}
+
+	private template Component(S) if (is(S == struct)) {
+		alias Component = S;
 	}
 
 	private template StreamBuilder(int begin, int cur, int end) {
@@ -38,25 +198,26 @@ struct Stream(Stages...) {
 				alias RhsImpl = _Ri;
 			static if (begin + 1 == end && is(Cur _Impl)) {
 				alias Impl = _Impl;
-				pragma(msg, "Match: ", Stages[begin]);
 			} else static if (cur + 1 == end && is(Cur!LhsImpl _Impl)) {
 				alias Impl = _Impl;
-				pragma(msg, "Match: ", Stages[cur .. end]);
 			} else static if (cur == begin && is(Cur!RhsImpl _Impl)) {
 				alias Impl = _Impl;
-				pragma(msg, "Match: ", Stages[begin .. cur + 1]);
 			} else static if (is(Cur!(LhsImpl, RhsImpl) _Impl)) {
 				alias Impl = _Impl;
-				pragma(msg, "Match: ", Stages[begin .. end]);
 			}
 			static if (is(Impl)) {
-				void construct(ref Impl impl) {
+				void construct()(ref Impl impl) {
 					static if (is(LhsImpl))
 						Lhs.construct(impl.source);
 					static if (is(RhsImpl))
 						Rhs.construct(impl.sink);
-					static if (Stages[cur].Args.length > 0) impl.__ctor(stages[cur].args.expand);
-					writefln("%-30s %X[%d]: [%(%02x%|, %)]", Stages[cur].Impl.stringof, &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
+					static if (hasCtorArgs!(Stages[cur])) {
+						alias Requested = Stages[cur];
+						enum index = tupleIndex!(cur, Stages);
+						auto stage = cast(Stages[cur]*) _res.stages[index];
+						impl.__ctor(stage.args);
+					}
+					// writefln("%-30s %X[%d]: [%(%02x%|, %)]", Stages[cur].Impl.stringof, &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
 				}
 			} static if (cur + 1 < end) {
 				alias Next = StreamBuilder!(begin, cur + 1, end);
@@ -66,59 +227,99 @@ struct Stream(Stages...) {
 		}
 	}
 
-	auto pipe(alias NextStage, Args...)(Args args)
+	/** Appends next stage at the end of data processing pipeline.
+	 *
+	 * Params:
+	 * NextStage = Stream component (struct or struct template) to be used as the next stage in the pipeline.
+	 * args      = Arguments passed to the constructor when the stream is instantiated.
+	 *
+	 * Returns:
+	 * A new Stream specification with NextStage at the end.
+	 *
+	 * Notes:
+	 * Constructor of NextStage is not executed at this point.
+	 * args are copied to temporary storage for a deferred invocation of the constructor.
+	 */
+	auto pipe(alias NextStage, Args...)(auto ref Args args)
 	{
-		auto stage = Stage!(NextStage, Args)(tuple(args));
-		alias S = typeof(stage);
-		return Stream!(Stages, S)(tuple(stages.expand, stage));
+		static if (areCompatible!(LastStage, NextStage)) {
+			assert(_res);
+			alias S = Stage!(NextStage, Args);
+			return Stream!(Stages, S)(_res, args);
+		} else {
+			static if (!isSource!LastStage) {
+				pragma(msg, "Error: ", lastStageName, " is not a source");
+			}
+			static if (!isSink!NextStage) {
+				pragma(msg, "Error: ", NextStage.stringof, " is not a sink");
+			}
+			static if (!areCompatible!(LastStage, NextStage)) {
+				pragma(msg, "Error: ", lastStageName,
+					" produces data using different method than ",
+					NextStage.stringof, " requires");
+			}
+			static assert(0, NextStage.stringof ~ " cannot sink data from " ~ lastStageName);
+		}
 	}
 
+	/// Instantiate the stream and perform all the processing.
 	void run()()
 	{
+		static assert(isCompleteStream, "Cannot run an incomplete stream");
 		import std.stdio;
 		alias Builder = StreamBuilder!(0, 0, Stages.length);
 		alias Impl = Builder.Impl;
 		static assert(is(Impl), "Could not build stream out of the following list of stages: " ~ Stages.stringof);
 		Impl impl;
-		writefln("%X[%d]: [%(%02x%|, %)]", &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
 		Builder.construct(impl);
 		writeln(typeof(impl).stringof, ": ", impl.sizeof);
 		impl.run();
 	}
+
 }
 
-template isStage(Ss...) {
-	static if (Ss.length == 1) {
-		alias S = Ss[0];
-		enum bool isStage = is(S == Stage!TL, TL...);
-	} else {
-		enum bool isStage = false;
-	}
-}
-
+/// Returns `true` if `Ss` is a stream.
 template isStream(Ss...) {
 	static if (Ss.length == 1) {
 		alias S = Ss[0];
 		static if (is(S == Stream!TL, TL...)) {
 			import std.meta : allSatisfy;
-			enum isStream = allSatisfy!(isStage, TL);
+			enum isStream = TL.length > 0 && allSatisfy!(isStage, TL);
 		}
 	} else {
 		enum isStream = false;
 	}
 }
 
-auto stream(alias Stage1, Args...)(Args args)
-{
-	auto tup = tuple(args);
-	auto stage = Stage!(Stage1, Args)(tup);
-	alias S = typeof(stage);
-	return Stream!S(tuple(stage));
+/// An empty _stream specification.
+struct Stream() {
+	private IAllocator allocator;
+
+	/// Builds a _stream specification composed of FirstStage only.
+	auto stream(alias FirstStage, Args...)(auto ref Args args)
+		if (isStreamComponent!FirstStage)
+	{
+		alias S = Stage!(FirstStage, Args);
+		return Stream!S(allocator, args);
+	}
 }
 
-import flod.traits;
+/// Creates a _stream specification which will use allocator for all its memory management.
+auto streamAllocator(IAllocator allocator)
+{
+	return Stream!()(allocator);
+}
 
-/// Convert buffered push source to unbuffered push source
+/** Starts building a _stream specification with default configuration and a single stage.
+ */
+auto stream(alias FirstStage, Args...)(auto ref Args args)
+	if (isStreamComponent!FirstStage)
+{
+	import std.experimental.allocator : theAllocator;
+	return streamAllocator(theAllocator).stream!FirstStage(args);
+}
+
+// Convert buffered push source to unbuffered push source
 struct BufferedToUnbufferedPushSource(Sink) {
 	Sink sink;
 
@@ -213,8 +414,7 @@ class PushPull(Sink)
 	}
 }
 
-/** Drive a stream which doesn't have any driving components
- */
+// Drive a stream which doesn't have any driving components
 struct PullPush(Source, Sink) {
 	Source source = void;
 	Sink sink = void;
@@ -232,35 +432,24 @@ struct PullPush(Source, Sink) {
 	}
 }
 
-struct Test(Sink = void)
+struct RefTracker
 {
 	import std.stdio : stderr;
 
-	static if (!is(Sink == void)) {
-		Sink sink;
-		this(Sink sink, int a)
-		{
-			this.sink = sink;
-			this.refs = new uint;
-			this.a = a;
-			*refs = 1;
-			stderr.writefln("%d ctor refs=%d", a, *refs);
-		}
-	} else {
-		this(int a)
-		{
-			this.refs = new uint;
-			this.a = a;
-			*refs = 1;
-			stderr.writefln("%d ctor refs=%d", a, *refs);
-		}
+	import core.stdc.stdlib: malloc, free;
+
+	this(int a)
+	{
+		this.refs = cast(uint*) malloc(uint.sizeof);
+		this.a = a;
+		*refs = 1;
+		stderr.writefln("%d ctor refs=%d", a, *refs);
 	}
 
 	int a;
 	uint* refs;
 
-
-	auto opAssign(Test rhs)
+	auto opAssign(RefTracker rhs)
 	{
 		import std.algorithm : swap;
 		swap(this, rhs);
@@ -278,31 +467,72 @@ struct Test(Sink = void)
 			return;
 		--*refs;
 		stderr.writefln("%d dtor refs=%d", a, *refs);
+		if (*refs == 0) {
+			free(this.refs);
+			this.refs = null;
+		}
 	}
 }
 
-auto test(T...)(T a)
-{
-	static if (T.length == 1)
-		return Test!()(a[0]);
-	else static if (T.length == 2)
-		return Test!(T[0])(a[0], a[1]);
-	else
-		return 0;
+struct Forward(Sink) {
+	Sink sink;
+	RefTracker x;
+
+	///
+	this(ref RefTracker x)
+	{
+		this.x = x;
+	}
+
+	size_t push(T)(const(T[]) data)
+	{
+		return sink.push(data);
+	}
 }
 
 unittest
 {
 	import flod.common : discard;
 	import std.stdio;
-	{
-		auto a = test(1337);
-		writefln("\n{%d}", a.a);
-	}
-	{
-		auto b = test(test(test(3), 13), 37);
-	}
 
+	import flod.file :FileReader, FileWriter;
+	import flod.common : take, drop, NullSource;
+	stderr.writeln("BEFORE");
+	{
+		import std.experimental.allocator.building_blocks.stats_collector : StatsCollector, Options;
+		import std.experimental.allocator.building_blocks.region : InSituRegion;
+		import std.experimental.allocator.mallocator : Mallocator;
+		import std.experimental.allocator : allocatorObject;
+		auto x = allocatorObject(StatsCollector!(Mallocator, Options.all)());
+
+		{
+			auto s = streamAllocator(x)
+				.stream!FileReader("/etc/passwd")
+				.drop(3)
+				.pipe!PullPush.take(3)
+				.pipe!Forward(RefTracker(1))
+				.pipe!Forward(RefTracker(2))
+				.pipe!Forward(RefTracker(3))
+				.pipe!Forward(RefTracker(4))
+				.pipe!Forward(RefTracker(5))
+				.pipe!Forward(RefTracker(6))
+				.pipe!Forward(RefTracker(7))
+				.pipe!Forward(RefTracker(8))
+				.pipe!Forward(RefTracker(9))
+				.pipe!Forward(RefTracker(10))
+				.pipe!Forward(RefTracker(11))
+				.pipe!Forward(RefTracker(12))
+				.pipe!FileWriter("ep.out");
+
+			x.impl.reportStatistics(stderr);
+
+			stderr.writeln("CREATED");
+			s.run();
+			x.impl.writeln("EXECUTED");
+		}
+		x.impl.reportStatistics(stderr);
+	}
+	stderr.writeln("AFTER");
 //	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();
 //	pragma(msg, typeof(stream1));
 //	pragma(msg, stream1.sizeof);

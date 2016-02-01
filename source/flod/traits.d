@@ -693,3 +693,7 @@ template isSourceOnly(Ss...) {
 template isSinkOnly(Ss...) {
 	enum isSinkOnly = !isSource!Ss && isSink!Ss;
 }
+
+template isStreamComponent(Ss...) {
+	enum isStreamComponent = isSource!Ss || isSink!Ss;
+}
