@@ -262,20 +262,101 @@ struct Stream(Stages...) if (Stages.length > 0 && allSatisfy!(isStage, Stages)) 
 		}
 	}
 
+	private alias Builder = StreamBuilder!(0, 0, Stages.length);
+
 	/// Instantiate the stream and perform all the processing.
 	void run()()
 	{
 		static assert(isCompleteStream, "Cannot run an incomplete stream");
 		import std.stdio;
-		alias Builder = StreamBuilder!(0, 0, Stages.length);
+	//	alias Builder = StreamBuilder!(0, 0, Stages.length);
 		alias Impl = Builder.Impl;
 		static assert(is(Impl), "Could not build stream out of the following list of stages: " ~ Stages.stringof);
 		Impl impl;
 		Builder.construct(impl);
 		writeln(typeof(impl).stringof, ": ", impl.sizeof);
-		impl.run();
+		static if (canRun!Impl)
+			impl.run();
+		else static if (canStep!Impl)
+			while (impl.step()) {}
+		else
+			static assert(false);
 	}
 
+	IAllocator allocator()
+	{
+		return _res.allocator;
+	}
+
+	static if ((isInputStream && (isPeekSource!LastStage || isPullSource!LastStage))
+		|| (isOutputStream && (isAllocSink!FirstStage || isPushSink!FirstStage)))
+	{
+		auto create()()
+		{
+			alias RCImpl = RefCountedStream!Stream.RCImpl;
+			RCImpl* rci = _res.allocator.make!RCImpl;
+			rci.allocator = _res.allocator;
+			Builder.construct(rci.impl);
+			return RefCountedStream!Stream(rci);
+		}
+	}
+}
+
+struct RefCountedStream(S)
+	if (isStream!S)
+{
+	private alias Impl = S.Builder.Impl;
+
+	private static struct RCImpl {
+		Impl impl;
+		IAllocator allocator;
+		uint refs = 0;
+	}
+
+	private RCImpl* _rci;
+	private this(RCImpl* rci) { this._rci = rci; _rci.refs++; }
+	this(this)
+	{
+		if (_rci)
+			++_rci.refs;
+	}
+	void opAssign(RefCountedStream rhs)
+	{
+		import std.algorithm : swap;
+		swap(this, rhs);
+	}
+	~this()
+	{
+		if (!_rci)
+			return;
+		if (_rci.refs == 1) {
+			import std.experimental.allocator : dispose;
+			_rci.allocator.dispose(_rci);
+			_rci = null;
+		} else {
+			assert(_rci.refs > 1);
+			--_rci.refs;
+		}
+	}
+	static if (isPullSource!(S.LastStage)) {
+		auto pull(T)(T[] buf) {
+			return _rci.impl.pull(buf);
+		}
+	}
+	static if (isPeekSource!(S.LastStage)) {
+		auto peek()(size_t n) {
+			return _rci.impl.peek(n);
+		}
+		auto peek(T)(size_t n) {
+			return _rci.impl.peek!T(n);
+		}
+		void consume()(size_t n) {
+			return _rci.impl.consume(n);
+		}
+		void consume(T)(size_t n) {
+			return _rci.impl.consume!T(n);
+		}
+	}
 }
 
 /// Returns `true` if `Ss` is a stream.
@@ -285,6 +366,10 @@ template isStream(Ss...) {
 		static if (is(S == Stream!TL, TL...)) {
 			import std.meta : allSatisfy;
 			enum isStream = TL.length > 0 && allSatisfy!(isStage, TL);
+		}
+		else {
+			pragma(msg, S.stringof);
+			enum isStream = false;
 		}
 	} else {
 		enum isStream = false;
@@ -301,6 +386,18 @@ struct Stream() {
 	{
 		alias S = Stage!(FirstStage, Args);
 		return Stream!S(allocator, args);
+	}
+
+	///
+	auto stream(T)(const(T)[] array)
+	{
+		static struct FromArray {
+			const(T)[] array;
+			this(const(T)[] array) { this.array = array; }
+			const(T[]) peek(size_t length) { return array; }
+			void consume(size_t length) { array = array[length .. $]; }
+		}
+		return this.stream!FromArray(array);
 	}
 }
 
@@ -319,117 +416,10 @@ auto stream(alias FirstStage, Args...)(auto ref Args args)
 	return streamAllocator(theAllocator).stream!FirstStage(args);
 }
 
-// Convert buffered push source to unbuffered push source
-struct BufferedToUnbufferedPushSource(Sink) {
-	Sink sink;
-
-	void open()
-	{
-		sink.open();
-	}
-
-	size_t push(const(ubyte)[] b)
-	{
-		auto buf = sink.alloc(b.length);
-		buf[] = b[0 .. buf.length];
-		sink.commit(buf.length);
-		return buf.length;
-	}
-}
-
-class PushPull(Sink)
+auto stream(T)(const(T)[] array)
 {
-	import core.thread;
-
-	private {
-		Sink sink;
-		ubyte[] buffer;
-		size_t peekOffset;
-		size_t readOffset;
-		void[__traits(classInstanceSize, Fiber)] fiberBuf;
-
-		final @property Fiber sinkFiber() pure
-		{
-			return cast(Fiber) cast(void*) fiberBuf;
-		}
-	}
-
-	this() @trusted
-	{
-		import std.conv : emplace;
-		emplace!Fiber(fiberBuf[], &this.fiberFunc);
-	}
-
-	~this() @trusted
-	{
-		sinkFiber.__dtor();
-	}
-
-	private final void fiberFunc()
-	{
-		stderr.writefln("this in fiberFunc %d %d", peekOffset, readOffset);
-		sink.pull();
-	}
-
-	// push sink interface
-	size_t push(const(ubyte[]) data)
-	{
-		stderr.writefln("push %d bytes", data.length);
-		if (readOffset + data.length > buffer.length)
-			buffer.length = readOffset + data.length;
-		buffer[readOffset .. readOffset + data.length] = data[];
-		readOffset += data.length;
-		stderr.writefln("%d bytes available", readOffset);
-		sinkFiber.call();
-		return data.length;
-	}
-
-	// TODO: alloc+commit
-
-	// pull source interface
-	const(ubyte)[] peek(size_t size)
-	{
-		stderr.writefln("peek %d, po %d, ro %d, available %d", size, peekOffset, readOffset, readOffset - peekOffset);
-		while (peekOffset + size > readOffset)
-			Fiber.yield();
-		return buffer[peekOffset .. $];
-	}
-
-	void consume(size_t size)
-	{
-		peekOffset += size;
-		if (peekOffset == readOffset) {
-			peekOffset = 0;
-			readOffset = 0;
-		}
-	}
-
-	void pull(ubyte[] outbuf)
-	{
-		import std.algorithm : min;
-		auto inbuf = peek(outbuf.length);
-		auto l = min(inbuf.length, outbuf.length);
-		outbuf[0 .. l] = inbuf[0 .. l];
-		consume(l);
-	}
-}
-
-// Drive a stream which doesn't have any driving components
-struct PullPush(Source, Sink) {
-	Source source = void;
-	Sink sink = void;
-
-	void run()
-	{
-		ubyte[4096] buf;
-		for (;;) {
-			size_t n = source.pull(buf[]);
-			if (n == 0)
-				break;
-			if (sink.push(buf[0 .. n]) < n)
-				break;
-		}
-	}
+	import std.experimental.allocator : theAllocator;
+	return streamAllocator(theAllocator).stream(array);
 }
 
 struct RefTracker
@@ -497,6 +487,8 @@ unittest
 
 	import flod.file :FileReader, FileWriter;
 	import flod.common : take, drop, NullSource;
+	import flod.adapter : PullPush;
+
 	stderr.writeln("BEFORE");
 	{
 		import std.experimental.allocator.building_blocks.stats_collector : StatsCollector, Options;

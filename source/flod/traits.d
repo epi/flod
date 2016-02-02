@@ -106,7 +106,7 @@ private template WriteBufferType(alias buf) {
 		}());
 }
 
-private bool canRun(S)()
+bool canRun(S)()
 {
 	return __traits(compiles,
 		{
@@ -115,7 +115,7 @@ private bool canRun(S)()
 		});
 }
 
-private bool canStep(S)()
+bool canStep(S)()
 {
 	return __traits(compiles,
 		{

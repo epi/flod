@@ -102,37 +102,17 @@ struct PullPush(Source, Sink) {
 	Source source = void;
 	Sink sink = void;
 
-	void run()
+	bool step()()
 	{
 		ubyte[4096] buf;
-		for (;;) {
-			size_t n = source.pull(buf[]);
-			if (n == 0)
-				break;
-			if (sink.push(buf[0 .. n]) < n)
-				break;
-		}
+		size_t n = source.pull(buf[]);
+		if (n == 0)
+			return false;
+		if (sink.push(buf[0 .. n]) < n)
+			return false;
+		return true;
 	}
 }
-
-struct FromArray(T)
-{
-	const(T)[] array;
-
-	/* pull source with own buffer */
-	const(T[]) peek(size_t length)
-	{
-		import std.algorithm : min;
-		return array[0 .. min(length, array.length)];
-	}
-
-	void consume(size_t length)
-	{
-		array = array[length .. $];
-	}
-}
-
-auto fromArray(T)(const(T[]) array) { return FromArray!T(array); }
 
 struct PullBuffer(Source, T)
 {
