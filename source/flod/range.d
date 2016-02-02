@@ -5,19 +5,19 @@ module flod.range;
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 import std.traits : isScalarType;
 
-import flod.stream : isStream;
+import flod.pipeline : isPipeline;
 
-
-auto byLine(Terminator = char, Char = char, Stream)(Stream s, KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
-	if (isStream!Stream && isScalarType!Terminator)
+auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
+	if (isPipeline!Pipeline && isScalarType!Terminator)
 {
+	import flod.stream : RefCountedStream, refCountedStream;
+
 	static struct ByLine
 	{
-		import flod.stream : RefCountedStream;
-		RefCountedStream!Stream stream;
+		RefCountedStream!Pipeline stream;
 		Terminator term;
 		bool keep;
-		this(RefCountedStream!Stream stream, Terminator term, bool keep)
+		this(RefCountedStream!Pipeline stream, Terminator term, bool keep)
 		{
 			this.stream = stream;
 			this.term = term;
@@ -53,7 +53,6 @@ auto byLine(Terminator = char, Char = char, Stream)(Stream s, KeepTerminator kee
 		{
 			stream.consume(line.length);
 			next();
-
 		}
 
 		@property const(Char)[] front()
@@ -65,26 +64,27 @@ auto byLine(Terminator = char, Char = char, Stream)(Stream s, KeepTerminator kee
 			return line;
 		}
 	}
-	auto r = ByLine(s.create(), terminator, keepTerminator == KeepTerminator.yes);
+
+	auto r = ByLine(refCountedStream(pipeline), terminator, keepTerminator == KeepTerminator.yes);
 	r.next();
 	return r;
 }
 
 unittest
 {
-	import flod.stream : stream;
+	import flod.pipeline : pipe;
 	import std.range : take, array;
 	auto testArray = "first line\nsecond line\nline without terminator";
-	assert(stream(testArray).byLine(KeepTerminator.yes, 'e').array == [
+	assert(pipe(testArray).byLine(KeepTerminator.yes, 'e').array == [
 		"first line", "\nse", "cond line", "\nline", " without te", "rminator" ]);
-	assert(stream(testArray).byLine(KeepTerminator.no, 'e').array == [
+	assert(pipe(testArray).byLine(KeepTerminator.no, 'e').array == [
 		"first lin", "\ns", "cond lin", "\nlin", " without t", "rminator" ]);
-	assert(stream(testArray).byLine!(char, char)(KeepTerminator.yes).array == [
+	assert(pipe(testArray).byLine!(char, char)(KeepTerminator.yes).array == [
 		"first line\n", "second line\n", "line without terminator" ]);
-	assert(stream(testArray).byLine!(char, char).array == [
+	assert(pipe(testArray).byLine!(char, char).array == [
 		"first line", "second line", "line without terminator" ]);
-	assert(stream(testArray).byLine(KeepTerminator.yes, 'z').array == [
+	assert(pipe(testArray).byLine(KeepTerminator.yes, 'z').array == [
 		"first line\nsecond line\nline without terminator" ]);
-	foreach (c; stream(testArray).byLine(KeepTerminator.yes, '\n'))
+	foreach (c; pipe(testArray).byLine(KeepTerminator.yes, '\n'))
 		c.writeln();
 }

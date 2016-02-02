@@ -6,7 +6,7 @@
  */
 module flod.file;
 
-import flod.stream;
+import flod.pipeline;
 import flod.traits;
 
 struct MmappedFile {
@@ -163,9 +163,9 @@ unittest
 {
 	import flod.common : take, drop, NullSource;
 	import flod.adapter : PullPush;
-	auto s = stream!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
+	auto s = pipe!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
 	s.run();
-	stream!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();
+	pipe!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();
 }
 
 void test_fw()

@@ -6,7 +6,7 @@
  */
 module flod.common;
 
-import flod.stream : isStream;
+import flod.pipeline : isPipeline;
 
 /** A filter which truncates the stream after reading the specified number elements
  *  or the entire stream, whichever comes first.
@@ -37,10 +37,10 @@ struct Take(Sink) {
 }
 
 /// Truncate the stream to n elements if its length is greater than n.
-auto take(S)(S stream, ulong n)
-	if (isStream!S)
+auto take(P)(P pipeline, ulong n)
+	if (isPipeline!P)
 {
-	return stream.pipe!Take(n);
+	return pipeline.pipe!Take(n);
 }
 
 /** A filter which drops the initial n elements from the stream and forwards the remaining part unchanged.
@@ -91,10 +91,10 @@ struct Drop(Source) {
 }
 
 /// _Drop the initial n elements from stream and forward the remaining part unchanged.
-auto drop(S)(S stream, ulong n)
-	if (isStream!S)
+auto drop(P)(P pipeline, ulong n)
+	if (isPipeline!P)
 {
-	return stream.pipe!Drop(n);
+	return pipeline.pipe!Drop(n);
 }
 
 /** A sink that discards all data written to it.
@@ -108,7 +108,7 @@ struct NullSink {
 /** Read the stream discarding all data.
  */
 auto discard(S)(S stream)
-	if (isStream!S)
+	if (isPipeline!S)
 {
 	return stream.pipe!NullSink;
 }
@@ -123,9 +123,9 @@ struct NullSource {
 
 unittest
 {
-	import flod.stream : stream;
+	import flod.pipeline : pipe;
 	import flod.adapter : PullPush;
 
-	stream!NullSource.pipe!PullPush.discard().run(); // do nothing
-	stream!NullSource.pipe!PullPush.pipe!NullSink().run(); // also do nothing
+	pipe!NullSource.pipe!PullPush.discard().run(); // do nothing
+	pipe!NullSource.pipe!PullPush.pipe!NullSink().run(); // also do nothing
 }
