@@ -162,6 +162,7 @@ struct ByLine(Source) {
 unittest
 {
 	import flod.common : take, drop, NullSource;
+	import flod.adapter : PullPush;
 	auto s = stream!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
 	s.run();
 	stream!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();

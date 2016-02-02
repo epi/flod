@@ -123,7 +123,8 @@ struct NullSource {
 
 unittest
 {
-	import flod.stream : stream, PullPush;
+	import flod.stream : stream;
+	import flod.adapter : PullPush;
 
 	stream!NullSource.pipe!PullPush.discard().run(); // do nothing
 	stream!NullSource.pipe!PullPush.pipe!NullSink().run(); // also do nothing
