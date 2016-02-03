@@ -10,16 +10,17 @@ import flod.pipeline : isPipeline;
 auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
 	if (isPipeline!Pipeline && isScalarType!Terminator)
 {
-	import flod.stream : RefCountedStream, refCountedStream;
+	import flod.stream : RefCountedStream, refCountedStream, stream;
 
 	static struct ByLine
 	{
 		RefCountedStream!Pipeline stream;
+		Pipeline pipeline;
 		Terminator term;
 		bool keep;
-		this(RefCountedStream!Pipeline stream, Terminator term, bool keep)
+		this(Pipeline pipeline, Terminator term, bool keep)
 		{
-			this.stream = stream;
+			this.pipeline = pipeline;
 			this.term = term;
 			this.keep = keep;
 		}
@@ -47,26 +48,70 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 			line = buf[0 .. i + 1];
 		}
 
-		@property bool empty() { return line is null; }
+		@property bool empty()
+		{
+			if (line !is null)
+				return false;
+			if (stream.isNull) {
+				stream = refCountedStream(pipeline);
+				next();
+				return false;
+			}
+			else {
+				return true;
+			}
+		}
 
 		void popFront()
 		{
+			assert(!stream.isNull);
 			stream.consume(line.length);
 			next();
 		}
 
 		@property const(Char)[] front()
 		{
+			assert(!stream.isNull);
 			if (keep)
 				return line;
 			if (line.length > 0 && line[$ - 1] == term)
 				return line[0 .. $ - 1];
 			return line;
 		}
+
+		int opApply(scope int delegate(const(Char[]) ln) dg)
+		{
+			auto stream = pipeline.stream();
+			for (;;) {
+				auto buf = stream.peek!Char(2);
+				size_t start = 0;
+				size_t i = 0;
+				if (buf.length == 0)
+					return 0;
+				for (;;) {
+					while (buf[i] != term) {
+						i++;
+						if (i >= buf.length) {
+							if (start > 0)
+								goto cont;
+							buf = stream.peek(buf.length * 2);
+							if (buf.length == i)
+								return dg(buf[0 .. i]);
+						}
+					}
+					int result = dg(buf[start .. i + (keep ? 1 : 0)]);
+					if (result)
+						return result;
+					start = ++i;
+				}
+			cont:
+				stream.consume!Char(start);
+			}
+			return 0;
+		}
 	}
 
-	auto r = ByLine(refCountedStream(pipeline), terminator, keepTerminator == KeepTerminator.yes);
-	r.next();
+	auto r = ByLine(pipeline, terminator, keepTerminator == KeepTerminator.yes);
 	return r;
 }
 

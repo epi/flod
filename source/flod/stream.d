@@ -28,17 +28,28 @@ struct Stream(P)
 	@disable void opAssign(Stream!P);
 
 	static if (isPeekSource!(P.LastStage)) {
-		auto peek()(size_t n) {
+		auto peek()(size_t n)
+		{
 			return _impl.peek(n);
 		}
 		auto peek(T)(size_t n) {
-			return _impl.peek!T(n);
+			static if (is(typeof(_impl.peek!T(n)[0]) : const(T)))
+				return _impl.peek!T(n);
+			else static if (is(typeof(_impl.peek(n)[0]) : const(T)))
+				return _impl.peek(n);
 		}
-		void consume()(size_t n) {
+		void consume()(size_t n)
+		{
 			return _impl.consume(n);
 		}
-		void consume(T)(size_t n) {
-			return _impl.consume!T(n);
+		void consume(T)(size_t n)
+		{
+			static if (is(typeof({_impl.consume!T(n);}())))
+				return _impl.consume!T(n);
+			else static if (is(typeof(_impl.peek(n)[0]) : const(T)))
+				return _impl.consume(n);
+			else
+				static assert(0, "Type mismatch");
 		}
 	}
 
@@ -151,22 +162,14 @@ struct RefCountedStream(P)
 		}
 	}
 
-	auto pull(T)(T[] buf) {
-		return _impl.stream.pull(buf);
-	}
+	@property bool isNull() const @safe @nogc { return _impl is null; }
 
-	auto peek()(size_t n) {
-		return _impl.stream.peek(n);
-	}
-	auto peek(T)(size_t n) {
-		return _impl.stream.peek!T(n);
-	}
-	void consume()(size_t n) {
-		return _impl.stream.consume(n);
-	}
-	void consume(T)(size_t n) {
-		return _impl.stream.consume!T(n);
-	}
+	auto pull(T)(T[] buf) { return _impl.stream.pull(buf); }
+
+	auto peek()(size_t n) { return _impl.stream.peek(n); }
+	auto peek(T)(size_t n) { return _impl.stream.peek!T(n); }
+	void consume()(size_t n) { return _impl.stream.consume(n); }
+	void consume(T)(size_t n) { return _impl.stream.consume!T(n); }
 }
 
 auto refCountedStream(T)(auto ref T something)
