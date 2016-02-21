@@ -274,7 +274,7 @@ private struct Pipeline(Stages...) if (Stages.length > 0 && allSatisfy!(isStage,
 		static if (canRun!Impl)
 			impl.run();
 		else static if (canStep!Impl)
-		while (impl.step()) {}
+			while (impl.step()) {}
 		else
 			static assert(false);
 	}
@@ -353,7 +353,7 @@ struct RefTracker
 		this.refs = cast(uint*) malloc(uint.sizeof);
 		this.a = a;
 		*refs = 1;
-		stderr.writefln("%d ctor refs=%d", a, *refs);
+//		stderr.writefln("%d ctor refs=%d", a, *refs);
 	}
 
 	int a;
@@ -368,7 +368,7 @@ struct RefTracker
 	this(this)
 	{
 		++*refs;
-		stderr.writefln("%d copy refs=%d", a, *refs);
+//		stderr.writefln("%d copy refs=%d", a, *refs);
 	}
 
 	~this()
@@ -376,7 +376,7 @@ struct RefTracker
 		if (!refs)
 			return;
 		--*refs;
-		stderr.writefln("%d dtor refs=%d", a, *refs);
+//		stderr.writefln("%d dtor refs=%d", a, *refs);
 		if (*refs == 0) {
 			free(this.refs);
 			this.refs = null;
@@ -436,13 +436,13 @@ unittest
 					.pipe!Forward(RefTracker(12))
 					.pipe!FileWriter("ep.out");
 
-			x.impl.reportStatistics(stderr);
+	//		x.impl.reportStatistics(stderr);
 
 			stderr.writeln("CREATED");
 			s.run();
 			x.impl.writeln("EXECUTED");
 		}
-		x.impl.reportStatistics(stderr);
+	//	x.impl.reportStatistics(stderr);
 	}
 	stderr.writeln("AFTER");
 	//	auto stream1 = stream!CurlReader("http://icecast.radiovox.org:8000/live.ogg").discard();

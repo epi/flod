@@ -12,12 +12,12 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 {
 	import flod.stream : RefCountedStream, refCountedStream, stream;
 
-	static struct ByLine
-	{
+	static struct ByLine {
 		RefCountedStream!Pipeline stream;
 		Pipeline pipeline;
 		Terminator term;
 		bool keep;
+
 		this(Pipeline pipeline, Terminator term, bool keep)
 		{
 			this.pipeline = pipeline;
@@ -92,15 +92,15 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 					while (buf[i] != term) {
 						i++;
 						if (i >= buf.length) {
+							assert(i == buf.length);
 							if (start > 0)
 								goto cont;
-							buf = stream.peek(buf.length * 2);
+							buf = stream.peek(i * 2);
 							if (buf.length == i)
 								return dg(buf[0 .. i]);
 						}
 					}
-					int result = dg(buf[start .. i + (keep ? 1 : 0)]);
-					if (result)
+					if (int result = dg(buf[start .. i + (keep ? 1 : 0)]))
 						return result;
 					start = ++i;
 				}
