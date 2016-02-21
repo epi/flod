@@ -106,6 +106,7 @@ private template WriteBufferType(alias buf) {
 		}());
 }
 
+// TODO: make it a template enum. A Function generates template bloat
 bool canRun(S)()
 {
 	return __traits(compiles,
@@ -115,6 +116,7 @@ bool canRun(S)()
 		});
 }
 
+// TODO: make it a template enum. A Function generates template bloat
 bool canStep(S)()
 {
 	return __traits(compiles,
@@ -124,6 +126,7 @@ bool canStep(S)()
 		});
 }
 
+// TODO: make it a template enum. A Function generates template bloat
 private bool canPush(S)()
 {
 	static struct CanPushPOD { uint meaningless; }
@@ -150,6 +153,7 @@ private bool canPush(S)()
 			}()) : size_t);
 }
 
+// TODO: make it a template enum. A Function generates template bloat
 private bool canPull(S)()
 {
 	static struct CanPullPOD { bool dummy; float justForTest; }
@@ -176,6 +180,48 @@ private bool canPull(S)()
 			}()) : size_t);
 }
 
+bool hasGenericPull(S)() {
+	static struct CanPullPOD { bool dummy; float justForTest; }
+	auto getPullPtr(ref S s)
+	{
+		static if (is(typeof(&s.pull!CanPullPOD)))
+			return &s.pull!CanPullPOD;
+		else
+			return null;
+	}
+	return is(typeof(
+			{
+				S s;
+				auto f = getPullPtr(s);
+				import std.traits : ParameterTypeTuple;
+				alias B = ParameterTypeTuple!(typeof(f))[0];
+				alias T = typeof({ B b; return b[0].init; }());
+				T[] buf;
+				return s.pull(buf);
+			}()) : size_t);
+}
+
+template DefaultPullType(S) {
+	auto getPullPtr(ref S s)
+	{
+		static if (is(typeof(&s.pull!())))
+			return &s.pull!();
+		else static if (is(typeof(&s.pull)))
+			return &s.pull;
+		else
+			return null;
+	}
+	alias DefaultPullType = typeof(
+		{
+			S s;
+			auto f = getPullPtr(s);
+			import std.traits : ParameterTypeTuple;
+			alias B = ParameterTypeTuple!(typeof(f))[0];
+			B b; return b[0].init;
+		}());
+}
+
+// TODO: make it a template enum. A Function generates template bloat
 private bool canAlloc(S)()
 {
 	static struct CanAllocPOD { uint meaningless; long justForTest; }
@@ -202,6 +248,7 @@ private bool canAlloc(S)()
 			}()));
 }
 
+// TODO: make it a template enum. A Function generates template bloat
 private bool canPeek(S)()
 {
 	static struct CanPeekPOD { uint meaningless; short dummy; real justForTest; }
@@ -229,6 +276,16 @@ private bool canPeek(S)()
 				auto el2 = buf[$ - 1];
 				s.consume!(typeof(el2))(buf.length);
 			}()));
+}
+
+template hasPeek(S) {
+	enum hasPeek = canPeek!S;
+}
+
+template DefaultPeekType(S) {
+	static if (is(typeof({ S s; return s.peek(1)[0]; }()) T)) {
+		alias DefaultPeekType = T;
+	}
 }
 
 /// Returns `true` if `Ss` is a source from which data can be read by calling `pull()`.

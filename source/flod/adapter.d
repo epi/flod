@@ -114,55 +114,57 @@ struct PullPush(Source, Sink) {
 	}
 }
 
-struct PullBuffer(Source, T)
-{
-	pragma(msg, "PullBuffer: ", typeof(Source.init).stringof, ", ", T.stringof);
-	Source source;
+struct PullBuffer(Source) {
+	import std.experimental.allocator : IAllocator, expandArray, makeArray;
+	import flod.traits : DefaultPullType, hasGenericPull;
+	import std.stdio;
 
-	T[] buf;
+	Source source;
+	IAllocator allocator;
+
+	void[] buf;
 	size_t readOffset;
 	size_t peekOffset;
 
-	const(T)[] peek(size_t size)
+	static if (is(DefaultPullType!Source)) {
+		alias PullType = DefaultPullType!Source;
+		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
+		void consume()(size_t size) { doConsume!PullType(size); }
+	}
+	static if (hasGenericPull!Source) {
+		const(T)[] peek(T)(size_t size) { return doPeek!T(size); }
+		void consume(T)(size_t size) { doConsume!T(size); }
+	}
+
+	const(T)[] doPeek(T)(size_t size)
 	{
-		if (peekOffset + size > buf.length) {
-			buf.length = (peekOffset + size + 4095) & ~size_t(4095);
+		T[] tbuf = cast(T[]) buf;
+		if (peekOffset + size > tbuf.length) {
+			writefln("PullBuffer expected %d < available %d", peekOffset + size, tbuf.length);
+			if (!tbuf)
+				tbuf = allocator.makeArray!T(4096);
+			else
+				allocator.expandArray(tbuf, ((peekOffset + size + 4095) & ~size_t(4095)) - tbuf.length);
+			buf = tbuf;
 			writefln("PullBuffer grow %d", buf.length);
 		}
 		if (peekOffset + size > readOffset) {
-			size_t r = source.pull(buf[readOffset .. $]);
+			size_t r = source.pull(tbuf[readOffset .. $]);
 			readOffset += r;
 		}
-		return buf[peekOffset .. $];
+		return tbuf[peekOffset .. $];
 	}
 
-	void consume(size_t size)
+	void doConsume(T)(size_t size)
 	{
+		T[] tbuf = cast(T[]) buf;
 		peekOffset += size;
-		if (peekOffset == buf.length) {
+		if (peekOffset == tbuf.length) {
+			writefln("PullBuffer reset %d", buf.length);
 			peekOffset = 0;
 			readOffset = 0;
 		}
 	}
-}
-
-template SourceDataType(Source)
-{
-	private import std.traits : arity, ReturnType, Parameters = ParameterTypeTuple, isDynamicArray, ForeachType, Unqual;
-
-	static if (__traits(compiles, arity!(Source.init.pull))
-		&& arity!(Source.init.pull) == 1
-		&& is(ReturnType!(Source.init.pull) == size_t)
-		&& isDynamicArray!(Parameters!(Source.init.pull)[0])) {
-		alias SourceDataType = Unqual!(ForeachType!(Parameters!(Source.init.pull)[0]));
-	} else {
-		static assert(0, Sink.stringof ~ " is not a proper sink type");
-	}
-}
-
-auto pullBuffer(Source, T = SourceDataType!Source)(Source source)
-{
-	return PullBuffer!(Source, T)(source);
 }
 
 struct PushBuffer(Sink, T)
@@ -191,34 +193,18 @@ struct PushBuffer(Sink, T)
 	}
 }
 
-template SinkDataType(Sink)
+struct CircularPullBuffer(Source)
 {
-	private import std.traits : arity, ReturnType, Parameters = ParameterTypeTuple, isDynamicArray, ForeachType, Unqual;
-
-	static if (__traits(compiles, arity!(Sink.init.push))
-		&& arity!(Sink.init.push) == 1
-		&& is(ReturnType!(Sink.init.push) == void)
-		&& isDynamicArray!(Parameters!(Sink.init.push)[0])) {
-		alias SinkDataType = Unqual!(ForeachType!(Parameters!(Sink.init.push)[0]));
-	} else {
-		static assert(0, Sink.stringof ~ " is not a proper sink type");
-	}
-}
-
-auto pushBuffer(Sink, T = SinkDataType!Sink)(Sink sink)
-{
-	return PushBuffer!(Sink, T)(sink);
-}
-
-struct CompactPullBuffer(Source, T = SourceDataType!Sink)
-{
+	import std.stdio;
 	import std.exception : enforce;
 	import core.sys.posix.stdlib : mkstemp;
 	import core.sys.posix.unistd : close, unlink, ftruncate;
 	import core.sys.posix.sys.mman : mmap, munmap, MAP_ANON, MAP_PRIVATE, MAP_FIXED, MAP_SHARED, MAP_FAILED, PROT_WRITE, PROT_READ;
 
+	import flod.traits : FixedPullType, hasGenericPull;
+
+	Source source;
 	private {
-		Source source;
 		void* buffer;
 		size_t length;
 		size_t peekOffset;
@@ -269,10 +255,21 @@ struct CompactPullBuffer(Source, T = SourceDataType!Sink)
 			enforce(addr == buffer - length, "Failed to mmap 2nd part");
 			buffer = addr;
 		}
+		import std.stdio;
 		writefln("%016x,%08x", buffer, length * 2);
 	}
 
-	const(T)[] peek(size_t size)
+	static if (is(FixedPullType!Source)) {
+		alias PullType = FixedPullType!Source;
+		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
+		void consume()(size_t size) { doConsume!PullType(size); }
+	}
+	static if (hasGenericPull!Source) {
+		const(T)[] peek(T)(size_t size) { return doPeek!T(size); }
+		void consume(T)(size_t size) { doConsume!T(size); }
+	}
+
+	private const(T)[] doPeek(T)(size_t size)
 	{
 		enforce(size <= length, "Growing buffer not implemented");
 		auto buf = cast(T*) buffer;
@@ -284,7 +281,7 @@ struct CompactPullBuffer(Source, T = SourceDataType!Sink)
 		return buf[peekOffset .. readOffset];
 	}
 
-	void consume(size_t size)
+	private void doConsume(T)(size_t size)
 	{
 		assert(peekOffset + size <= readOffset);
 		peekOffset += size;

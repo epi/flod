@@ -8,40 +8,70 @@ module flod.stream;
 
 import flod.pipeline : isPipeline;
 
-// A stream based on pipeline P
+/** A _stream based on pipeline P.
+ *
+ * Instances of `Stream` are not copyable. If you need a _stream object that can be passed around,
+ * for example to create range objects, see `RefCountedStream`.
+ */
 struct Stream(P)
 	if (isPipeline!P)
 {
 	import std.experimental.allocator : IAllocator;
 	import flod.traits : isPeekSource, isPullSource;
+	import flod.adapter : PullBuffer;
 
-	private P.Impl _impl;
+	static if (isPeekSource!(P.LastStage)) {
+		private P.Impl _impl;
+	} else {
+		PullBuffer!(P.Impl) _pullBuffer;
+		private @property ref auto _impl() { return _pullBuffer.source; }
+	}
 	private IAllocator _allocator;
 
 	this(P p)
 	{
 		_allocator = p.allocator;
 		p.construct(_impl);
+		static if (is(typeof(this._pullBuffer.allocator))) {
+			this._pullBuffer.allocator = _allocator;
+		}
 	}
 
 	@disable this(this);
 	@disable void opAssign(Stream!P);
 
+	version (D_Ddoc) {
+		/** Source primitives.
+		 *
+		 * If the last stage of the pipeline supports these methods natively,
+		 * the calls are simply forwarded.
+		 * Otherwise, the appropriate copying/buffering is done here.
+		 */
+		auto peek()(size_t n);
+		/// ditto
+		auto peek(T)(size_t n);
+		/// ditto
+		void consume()(size_t n);
+		/// ditto
+		void consume(T)(size_t n);
+		/// ditto
+		size_t pull(T)(T[] buf);
+	}
+
 	static if (isPeekSource!(P.LastStage)) {
-		auto peek()(size_t n)
-		{
-			return _impl.peek(n);
-		}
+		auto peek()(size_t n) { return _impl.peek(n); }
+
 		auto peek(T)(size_t n) {
 			static if (is(typeof(_impl.peek!T(n)[0]) : const(T)))
 				return _impl.peek!T(n);
 			else static if (is(typeof(_impl.peek(n)[0]) : const(T)))
 				return _impl.peek(n);
+			else
+				static assert(false, P.lastStageName ~ " does not support data type " ~ T.stringof);
 		}
-		void consume()(size_t n)
-		{
-			return _impl.consume(n);
-		}
+
+		void consume()(size_t n) { return _impl.consume(n); }
+
 		void consume(T)(size_t n)
 		{
 			static if (is(typeof({_impl.consume!T(n);}())))
@@ -49,47 +79,55 @@ struct Stream(P)
 			else static if (is(typeof(_impl.peek(n)[0]) : const(T)))
 				return _impl.consume(n);
 			else
-				static assert(0, "Type mismatch");
+				static assert(false, P.lastStageName ~ " does not support data type " ~ T.stringof);
+		}
+
+		static if (!isPullSource!(P.LastStage)) {
+			size_t pull(T)(T[] buf)
+			{
+				import std.algorithm : min;
+				auto inbuf = peek!T(buf.length);
+				auto len = min(inbuf.length, buf.length);
+				buf[0 .. len] = inbuf[0 .. len];
+				consume!T(len);
+				return len;
+			}
 		}
 	}
 
-	auto pull(T)(T[] buf) {
-		static if (isPullSource!(P.LastStage)) {
-			return _impl.pull(buf);
-		} else static if (isPeekSource!(P.LastStage)) {
-			static if (is(typeof({ return _impl.peek!T(buf.length)[0]; }()) : const(T))) {
-				import std.algorithm : min;
-				auto inbuf = _impl.peek!T(buf.length);
-				auto len = min(inbuf.length, buf.length);
-				buf[0 .. len] = inbuf[0 .. len];
-				_impl.consume!T(len);
-				return len;
-			} else static if (is(typeof({ return _impl.peek(buf.length)[0]; }()) : const(T))) {
-				import std.algorithm : min;
-				auto inbuf = _impl.peek(buf.length);
-				auto len = min(inbuf.length, buf.length);
-				buf[0 .. len] = inbuf[0 .. len];
-				_impl.consume(len);
-				return len;
-			} else {
-				static if (is(typeof({ return _impl.peek(buf.length)[0]; }()) T)) {
-					pragma(msg, T.stringof);
-				}
-				static assert(false, P.lastStageName ~ " does not support data type " ~ T.stringof);
-			}
+	static if (isPullSource!(P.LastStage)) {
+		size_t pull(T)(T[] buf) { return _impl.pull(buf); }
+
+		static if (!isPeekSource!(P.LastStage)) {
+			auto peek()(size_t n) { return _pullBuffer.peek(n); }
+			auto peek(T)(size_t n) { return _pullBuffer.peek!T(n); }
+			void consume()(size_t n) { _pullBuffer.consume(n); }
+			void consume(T)(size_t n) { _pullBuffer.consume!T(n); }
 		}
 	}
 }
 
-auto stream(T)(auto ref T something)
+import flod.pipeline : isPipeline, pipe;
+import flod.traits : isStreamComponent;
+
+auto stream(alias FirstStage, Args...)(auto ref Args args)
+	if (isStreamComponent!FirstStage)
 {
-	static if (isPipeline!T) {
-		return Stream!T(something);
-	} else {
-		import flod.pipeline : pipe;
-		auto pl = pipe(something);
-		return Stream!(typeof(pl))(pl);
-	}
+	return pipe!FirstStage(args).stream();
+}
+
+auto stream(T)(auto ref T something)
+	if (isPipeline!T)
+{
+	return Stream!T(something);
+}
+
+
+auto stream(T)(auto ref T something)
+	if (is(Stream!(typeof(pipe(something)))))
+{
+	auto pl = pipe(something);
+	return Stream!(typeof(pl))(pl);
 }
 
 unittest
@@ -118,6 +156,27 @@ unittest
 	assert(intbuf[0 .. r] == [60, 70, 80]);
 }
 
+unittest
+{
+	static struct CountingSource {
+		uint cnt;
+		size_t pull(uint[] buf)
+		{
+			foreach (ref n; buf) { n = cnt++; }
+			return buf.length;
+		}
+	}
+	auto stream = stream!CountingSource();
+	//auto stream = p.stream();
+	import std.range: iota, array;
+
+	assert(stream.peek(10)[0 .. 10] == iota(0, 10).array);
+	assert(stream.peek(5)[0 .. 5] == iota(0, 5).array);
+	stream.consume(5);
+	assert(stream.peek(4096)[0 .. 4096] == iota(5, 4101).array);
+}
+
+///
 struct RefCountedStream(P)
 	if (isPipeline!P)
 {
