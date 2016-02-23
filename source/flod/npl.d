@@ -1,312 +1,296 @@
+///
 module flod.npl;
-import std.stdio;
-import std.string : format;
 
-import std.meta : staticMap;
-
-template inst(alias S, A...)
+auto mymove(X)(auto ref X x, string file = __FILE__, uint line = __LINE__)
 {
-	bool impl() { return is(S!A); }
-	enum inst = impl();
+	import std.algorithm : move;
+	import std.experimental.logger : infof;
+	infof(true, "(from %s:%d) MOVE %s", file, line, X.stringof);
+	return move(x);
 }
 
-struct NoFoo
+mixin template NonCopyable()
 {
+	@disable this(this);
+	@disable void opAssign(typeof(this));
 }
 
-struct HasFoo
-{
-	void foo() {}
-}
+struct PullSource {
+	mixin NonCopyable;
 
-struct CallsFoo(T)
-{
-	T t;
-	void run()
+	size_t pull(T)(T[] buf)
 	{
-		t.foo();
+		buf[] = T.init;
+		return buf.length;
 	}
 }
 
-static assert(!inst!(CallsFoo, NoFoo));
-static assert( inst!(CallsFoo, HasFoo));
-
-/// Returns an `AliasSeq` where `S` is repeated `count` times.
-template Repeat(int count, S...) {
-	import std.meta : AliasSeq;
-	static if (count == 0)
-		alias Repeat = AliasSeq!();
-	else static if (count == 1)
-		alias Repeat = AliasSeq!S;
-	else
-		alias Repeat = AliasSeq!(.Repeat!(count - 1, S), S);
-}
-
-unittest
+auto inits()
 {
-	import std.meta : AliasSeq;
-	template Z(S...) {}
-	alias I = int;
-	static struct X(S...) {}
-	static assert(is(Repeat!(5, void) == AliasSeq!(void, void, void, void, void)));
-	alias Repeated = Repeat!(3, 5, Z, I, bool);
-	static assert(is(X!Repeated == X!(5, Z, I, bool, 5, Z, I, bool, 5, Z, I, bool)));
+	return PullSource();
 }
 
-/// Returns an `AliasSeq` where `S[index + 1]` is replaced with `S[0]`.
-template ReplaceAt(int index, S...) if (index < S.length - 1) {
-	import std.meta : AliasSeq;
-	alias ReplaceAt = AliasSeq!(S[1 .. index + 1], S[0], S[index + 2 .. $]);
-}
+template PullFilter(T) {
+	struct PullFilter(Source) {
+	private:
+		Source source;
+		T what;
+		T withWhat;
 
-unittest
-{
-	import std.meta : AliasSeq;
-	static struct X(S...) {}
-	struct Z;
-	static assert(is(X!(ReplaceAt!(4, Z, Repeat!(6, void))) == X!(void, void, void, void, Z, void)));
-}
+	public:
+		mixin NonCopyable;
 
-private struct TypeList(S...) {}
-
-template Overlay(X, Y) {
-	import std.meta : AliasSeq;
-	static if (is(X == TypeList!XL, XL...)) {
-		static if (is(Y == TypeList!YL, YL...)) {
-			static if (XL.length == YL.length) {
-				static if (XL.length > 1) {
-					alias Remain = Overlay!(TypeList!(XL[1 .. $]), TypeList!(YL[1 .. $]));
-				} else {
-					alias Remain = AliasSeq!();
-				}
-				static assert(is(XL[0] == void) || is(YL[0] == void));
-				static if (is(XL[0] == void))
-					alias Overlay = AliasSeq!(YL[0], Remain);
-				else
-					alias Overlay = AliasSeq!(XL[0], Remain);
+		size_t pull(T)(T[] buf)
+		{
+			source.pull(buf);
+			foreach (ref b; buf) {
+				if (b == what)
+					b = withWhat;
 			}
+			return buf.length;
 		}
 	}
 }
 
-unittest
+///
+auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 {
-	struct W;
-	struct C;
-	alias List1 = TypeList!(void, int, W, void, void, C);
-	alias List2 = TypeList!(double, void, void, void, C, void);
-	pragma(msg, TypeList!(Overlay!(List1, List2)).stringof);
-	static assert(is(TypeList!(Overlay!(List1, List2)) == TypeList!(double, int, W, void, C, C)));
+	return Stage!(Pipeline)(mymove(pipeline), args);
 }
 
-template VectorAdd(alias X, alias Y) if (X.length == Y.length) {
-	static if (X.length > 1)
-		enum VectorAdd = [ X[0] + Y[0] ] ~ VectorAdd!(X[1 .. $], Y[1 .. $]);
-	else
-		enum VectorAdd = [ X[0] + Y[0] ];
-}
-
-template VectorZero(int length) {
-	alias Arr = int[length];
-	enum VectorZero = Arr.init[];
-}
-
-template VectorSet(int index, alias Value, alias X) {
-	enum VectorSet = X[0 .. index] ~ Value ~ X[index + 1 .. $];
+auto replace(Pipeline, T)(auto ref Pipeline pipeline, T what, T withWhat)
+{
+	return pipeline.pipe!(PullFilter!T)(what, withWhat);
 }
 
 unittest
 {
-	enum of1 = [ 0, 5, 10, 20, 35 ];
-	enum of2 = [ 4, 1, 0, 0, 0 ];
-	static assert(VectorZero!5 == [0, 0, 0, 0, 0]);
-	static assert(VectorAdd!(of1, of2) == [4, 6, 10, 20, 35]);
-	static assert(VectorAdd!(VectorZero!5, of2) == [4, 1, 0, 0, 0]);
+	auto x = inits().replace(ubyte.init, ubyte(5));
+	ubyte[100] buf;
+	x.pull(buf);
+	import std.range : repeat, array;
+	assert(buf[] == repeat(ubyte(5), 100).array());
 }
 
-template Builder(int begin, int cur, int end, Stages...) {
-	static assert(begin <= end && begin <= cur && cur <= end && end <= Stages.length,
-		"Invalid parameters: " ~
-		Stages.stringof ~ "[" ~ begin.stringof ~ "," ~ cur.stringof ~ "," ~ end.stringof ~ "]");
-	static if (cur < end) {
-		alias Pl = Pipeline!Stages;
-		enum index = cur;
-		static assert(is(Pl));
-		alias Cur = Stages[cur]; // template
-		alias Lhs = Builder!(begin, begin, cur, Stages);
-		alias Rhs = Builder!(cur + 1, cur + 1, end, Stages);
-		static if (is(Lhs.Impl L)) {
-			alias LhsImpl = L;
-		} else { alias LhsImpl = void; }
-		static if (is(Rhs.Impl R)) {
-			alias RhsImpl = R;
-		} else { alias RhsImpl = void; }
-		static if (begin + 1 == end && inst!(Cur, Pl)) {
-			alias Impl = Cur!Pl;
-			alias ImplSeq = ReplaceAt!(cur, Impl, Repeat!(Stages.length, void));
-		} else static if (cur + 1 == end && inst!(Cur, Pl, LhsImpl)) {
-			alias Impl = Cur!(Pl, LhsImpl);
-			alias ImplSeq =
-				Overlay!(
-					TypeList!(Lhs.ImplSeq),
-					TypeList!(ReplaceAt!(cur, Impl, Repeat!(Stages.length, void))));
-			alias offsetSeq = VectorZero!(Stages.length);
-			pragma(msg, format("%d.%d.%d %s %s", begin, cur, end, Stages.stringof, Impl.stringof));
-		} else static if (cur == begin && inst!(Cur, Pl, RhsImpl)) {
-			alias Impl = Cur!(Pl, RhsImpl);
-			alias ImplSeq =
-				Overlay!(
-					TypeList!(Rhs.ImplSeq),
-					TypeList!(ReplaceAt!(cur, Impl, Repeat!(Stages.length, void))));
-		} else static if (inst!(Cur, Pl, LhsImpl, RhsImpl)) {
-			alias Impl = Cur!(Pl, LhsImpl, RhsImpl);
-			alias ImplSeq =
-				Overlay!(
-					TypeList!(Overlay!(
-						TypeList!(Lhs.ImplSeq),
-						TypeList!(Rhs.ImplSeq))),
-					TypeList!(ReplaceAt!(cur, Impl, Repeat!(Stages.length, void))));
-			pragma(msg, format("%d.%d.%d %s %s", begin, cur, end, Stages.stringof, Impl.stringof));
+unittest
+{
+	auto i = inits();
+	auto r = i.replace(ubyte.init, ubyte(5));
+	ubyte[100] buf;
+}
+
+auto deferredCreate(alias Stage, Args...)(auto ref Args args)
+{
+	static struct DeferredCtor {
+		mixin NonCopyable;
+		Args args;
+
+		auto create(Sink)(auto ref Sink sink)
+		{
+			//import std.algorithm : move;
+			return Stage!Sink(mymove(sink), args);
 		}
-		static if (is(Impl)) {
-			template offsetOf(S) {
-				static if (is(S == Impl)) {
-					enum offsetOf = 0;
-				} else static if (is(typeof(Impl.init.source)) && is(typeof(Impl.init.source) == S)) {
-					enum offsetOf = Impl.init.source.offsetof;
-				} else static if (is(typeof(Impl.init.sink)) && is(typeof(Impl.init.sink) == S)) {
-					enum offsetOf = Impl.init.sink.offsetof;
-				} else static if (is(typeof(Lhs.offsetOf!S))) {
-					static if (is(Lhs.Impl == typeof(Impl.source))) {
-						enum offsetOf = Impl.init.source.offsetof + Lhs.offsetOf!S;
-					} else static if (is(Lhs.Impl == typeof(Impl.sink))) {
-						enum offsetOf = Impl.init.sink.offsetof + Lhs.offsetOf!S;
-					}
-				} else static if (is(typeof(Rhs.offsetOf!S))) {
-					static if (is(Rhs.Impl == typeof(Impl.source))) {
-						enum offsetOf = Impl.init.source.offsetof + Rhs.offsetOf!S;
-					} else static if (is(Rhs.Impl == typeof(Impl.sink))) {
-						enum offsetOf = Impl.init.sink.offsetof + Rhs.offsetOf!S;
-					}
-				}
-			}
-			void construct()(ref Impl impl) {
-				static if (is(LhsImpl))
-					Lhs.construct(impl.source);
-				static if (is(RhsImpl))
-					Rhs.construct(impl.sink);
-				static if (hasCtorArgs!(Stages[cur])) {
-					alias Requested = Stages[cur];
-					enum index = tupleIndex!(cur, Stages);
-					auto stage = cast(Stages[cur]*) _res.stages[index];
-					impl.__ctor(stage.args);
-				}
-				// writefln("%-30s %X[%d]: [%(%02x%|, %)]", Stages[cur].Impl.stringof, &impl, impl.sizeof, (cast(ubyte*) &impl)[0 .. impl.sizeof]);
-			}
-		} static if (cur + 1 < end) {
-			alias Next = Builder!(begin, cur + 1, end, Stages);
-			static if (is(Next.Impl)) {
-				alias Builder = Next;
-			}
+
+	}
+	return DeferredCtor(args);
+}
+
+auto deferredCreate2(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+{
+	static struct DeferredCtor {
+		mixin NonCopyable;
+		Pipeline pipeline;
+		Args args;
+
+		auto create(Sink)(auto ref Sink sink)
+		{
+			//import std.algorithm : move;
+			return Stage!(Pipeline, Sink)(mymove(pipeline), mymove(sink), args);
+		}
+
+	}
+	return DeferredCtor(mymove(pipeline), args);
+}
+
+auto chainedDeferredCreate(alias Stage, Next, Args...)(auto ref Next next, auto ref Args args)
+{
+	static struct ChainedDeferredCtor {
+		mixin NonCopyable;
+		Next next;
+		Args args;
+
+		auto create(Sink)(auto ref Sink sink)
+		{
+			//import std.algorithm : move;
+			return next.create(Stage!Sink(mymove(sink), args));
+		}
+	}
+	//import std.algorithm : move;
+	return ChainedDeferredCtor(mymove(next), args);
+}
+
+template PushSource(T) {
+	struct PushSource(Sink) {
+		mixin NonCopyable;
+
+		Sink sink;
+		const(T)[] blob;
+
+		int step()()
+		{
+			return sink.push(blob) != blob.length;
 		}
 	}
 }
 
-template GetStage(int index, alias SI)
+auto blobPush(T)(const(T)[] arr)
 {
-	static if (SI.index == index) {
-		alias GetStage = SI.Impl;
+	return deferredCreate!(PushSource!T)(arr);
+}
+
+struct PushSink {
+	mixin NonCopyable;
+
+	size_t push(T)(const(T)[] buf)
+	{
+		import std.stdio : writeln;
+		writeln(buf);
+		return buf.length;
 	}
 }
 
-struct Pipeline(Stages...)
+auto pushSink(Chain)(auto ref Chain chain)
 {
-	private alias Builder = .Builder!(0, 0, Stages.length, Stages);
-	int foo;
-	static if (is(Builder.Impl)) {
-		alias Impl = Builder.Impl;
-		alias ImplSeq = Builder.ImplSeq;
-		static ref auto get(S)(ref S that) {
-			void* thatPtr = &that;
-			void* outerPtr = thatPtr - (Pipeline.init.stream.offsetof + Builder.offsetOf!S);
-			return *cast(Pipeline*) outerPtr;
-		}
-		Impl stream;
-	}
-	int getFoo() { return foo; }
+	return chain.create(PushSink());
 }
 
-struct PullSource(Pl)
+unittest
 {
-	void pull() {}
+	auto x = deferredCreate!(PushSource!int)([1, 2, 3]);
+	auto y = blobPush([1, 2, 3]);
+	blobPush([ 1, 2, 3 ]).pushSink().step();
 }
 
-struct PullFilter(Pl, Source)
-{
-	Source source;
-	void pull() { source.pull(); }
-}
+struct PushTake(Sink) {
+	mixin NonCopyable;
 
-struct PullPush(Pl, Source, Sink)
-{
-	Source source;
+private:
 	Sink sink;
-	void run()
+	size_t count;
+
+public:
+	size_t push(T)(const(T)[] buf)
 	{
-		source.pull();
-		sink.push();
+		if (count >= buf.length) {
+			count -= buf.length;
+			return sink.push(buf);
+		} else if (count > 0) {
+			auto c = count;
+			count = 0;
+			return sink.push(buf[0 .. c]);
+		} else {
+			return 0;
+		}
 	}
 }
 
-struct PushFilter(Pl, Sink)
+auto take(Chain)(auto ref Chain chain, size_t count)
 {
-	Sink sink;
-	void push() { sink.push(); }
+	return chainedDeferredCreate!PushTake(chain, count);
 }
 
-struct PushSink(Pl)
+void run(Pipeline)(auto ref Pipeline t)
 {
-	void push()
-	{
-		//assert(Pl.get(this).getFoo() == 42);
-	}
-}
-
-struct PushSource(Pl, Sink)
-{
-	Sink sink;
-	void run()
-	{
-		sink.push();
-	}
+	while (t.step() == 0) {}
 }
 
 unittest
 {
-	alias P = Builder!(0, 0, 2, PushSource, PushSink);
-	alias Q = Builder!(0, 0, 3, PullSource, PullPush, PushSink);
-	static assert(!is(Builder!(0, 0, 3, PushSource, PullPush, PushSink).Impl));
-	alias R = Builder!(0, 0, 5, PullSource, PullFilter, PullPush, PushFilter, PushSink);
-//	alias Pl = Pipeline!(PullSource, PullFilter, PullPush, PushFilter, PushSink);
-	pragma(msg, "     => ", Pl.Builder.stringof);
-	static assert(is(Pl.Impl));
-	static assert(is(R.ImplSeq[0] == PullSource!Pl));
-	static assert(is(R.ImplSeq[1] == PullFilter!(Pl, PullSource!Pl)));
-	static assert(is(R.ImplSeq[2] ==
-			PullPush!(Pl,
-				PullFilter!(Pl, PullSource!Pl),
-				PushFilter!(Pl, PushSink!Pl))));
-	static assert(is(R.ImplSeq[3] == PushFilter!(Pl, PushSink!Pl)));
-	static assert(is(R.ImplSeq[4] == PushSink!Pl));
+	blobPush("test").take(20).take(20).pushSink().run();
+}
 
-	R.Impl stream;
-	static assert(R.offsetOf!(R.ImplSeq[0]) == stream.source.offsetof + stream.source.source.offsetof);
-	static assert(R.offsetOf!(R.ImplSeq[1]) == stream.source.offsetof);
-	static assert(R.offsetOf!(R.ImplSeq[2]) == 0);
-	static assert(R.offsetOf!(R.ImplSeq[3]) == stream.sink.offsetof);
-	static assert(R.offsetOf!(R.ImplSeq[4]) == stream.sink.offsetof + stream.sink.sink.offsetof);
+import std.stdio : File;
 
-	auto pipeline = Pl(42);
-	pragma(msg, Pl.Impl.stringof);
-	//pipeline.stream.run();
+struct FileWriter
+{
+	File file;
+
+	size_t push(T)(const(T)[] buf)
+	{
+		file.rawWrite(buf);
+		return buf.length;
+	}
+}
+
+auto writeFile(Pipeline)(auto ref Pipeline pipeline, File file)
+{
+	return pipeline.create(FileWriter(file));
+}
+
+unittest
+{
+	blobPush("test").take(100).writeFile(File("test", "wb")).run();
+}
+
+void writerep(T)(ref const(T) p)
+{
+	import std.stdio : writefln;
+
+	writefln("%(%02x%| %)", (cast(const(ubyte)*) &p)[0 .. T.sizeof]);
+}
+
+unittest
+{
+	auto f = File("best", "wb");
+	auto source = blobPush("test");
+	writerep(source);
+	auto tak = source.take(100);
+	writerep(tak);
+	auto wri = tak.writeFile(f);
+	writerep(source);
+	writerep(tak);
+	writerep(wri);
+
+	blobPush("test").take(100).writeFile(f).run();
+	f.rawWrite("X");
+}
+
+auto fromFile(File file)
+{
+	static struct FileReader {
+		mixin NonCopyable;
+		File file;
+
+		size_t pull(T)(T[] buf)
+		{
+			return file.rawRead(buf).length;
+		}
+	}
+
+	return FileReader(file);
+}
+
+template PullPush(size_t chunkSize) {
+	struct PullPush(Source, Sink) {
+		mixin NonCopyable;
+		Source source;
+		Sink sink;
+
+		int step()
+		{
+			ubyte[chunkSize] buf;
+			auto n = source.pull(buf);
+			return sink.push(buf[0 .. n]) != buf.length;
+		}
+	}
+}
+
+auto pullPush(size_t chunkSize = 4096, Pipeline)(auto ref Pipeline pipeline)
+{
+	return deferredCreate2!(PullPush!(chunkSize))(mymove(pipeline));
+}
+
+unittest
+{
+	fromFile(File("log")).pullPush.take(31337).writeFile(File("log_copy", "wb")).run();
 }
