@@ -6,6 +6,8 @@
  */
 module flod.common;
 
+version(FlodBloat):
+
 import flod.pipeline : isPipeline;
 
 /** A filter which truncates the stream after reading the specified number elements

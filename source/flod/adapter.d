@@ -2,6 +2,94 @@
  */
 module flod.adapter;
 
+import flod.traits;
+
+struct DefaultPullPeekAdapter(Source) {
+	import std.experimental.allocator : IAllocator, processAllocator, expandArray, makeArray;
+	import std.stdio;
+	import flod.traits : DefaultPullType, hasGenericPull;
+	import flod.meta : moveIfNonCopyable;
+
+	private {
+	Source source;
+	IAllocator allocator;
+
+	void[] buf;
+	size_t readOffset;
+	size_t peekOffset;
+	}
+
+	this()(auto ref Source source, IAllocator allocator = processAllocator) {
+		this.source = moveIfNonCopyable(source);
+		this.allocator = allocator;
+	}
+
+	static if (is(DefaultPullType!Source)) {
+		alias PullType = DefaultPullType!Source;
+		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
+		void consume()(size_t size) { doConsume!PullType(size); }
+	}
+	static if (hasGenericPull!Source) {
+		const(T)[] peek(T = ubyte)(size_t size) { return doPeek!T(size); }
+		void consume(T = ubyte)(size_t size) { doConsume!T(size); }
+	}
+
+	const(T)[] doPeek(T)(size_t size)
+	{
+		T[] tbuf = cast(T[]) buf;
+		if (peekOffset + size > tbuf.length) {
+			writefln("PullBuffer expected %d < available %d", peekOffset + size, tbuf.length);
+			if (!tbuf)
+				tbuf = allocator.makeArray!T(4096);
+			else
+				allocator.expandArray(tbuf, ((peekOffset + size + 4095) & ~size_t(4095)) - tbuf.length);
+			buf = tbuf;
+			writefln("PullBuffer grow %d", buf.length);
+		}
+		if (peekOffset + size > readOffset) {
+			size_t r = source.pull(tbuf[readOffset .. $]);
+			readOffset += r;
+		}
+		return tbuf[peekOffset .. $];
+	}
+
+	void doConsume(T)(size_t size)
+	{
+		T[] tbuf = cast(T[]) buf;
+		peekOffset += size;
+		if (peekOffset == tbuf.length) {
+			writefln("PullBuffer reset %d", buf.length);
+			peekOffset = 0;
+			readOffset = 0;
+		}
+	}
+}
+static assert(isPeekSource!DefaultPullPeekAdapter);
+static assert(isPullSink!DefaultPullPeekAdapter);
+
+struct DefaultPeekPullAdapter(Source) {
+	Source source;
+
+	size_t pull(T)(T[] buf)
+	{
+		import std.algorithm : min;
+		static if (hasGenericPeek!Source) {
+			auto inbuf = source.peek!T(buf.length);
+		} else {
+			auto inbuf = source.peek(buf.length);
+		}
+		auto l = min(buf.length, inbuf.length);
+		buf[0 .. l] = inbuf[0 .. l];
+		source.consume(l);
+		return buf.length;
+	}
+}
+static assert(isPullSource!DefaultPeekPullAdapter);
+static assert(isPeekSink!DefaultPeekPullAdapter);
+
+
+version(FlodBloat):
+
 // Convert buffered push source to unbuffered push source
 struct BufferedToUnbufferedPushSource(Sink) {
 	Sink sink;
@@ -111,59 +199,6 @@ struct PullPush(Source, Sink) {
 		if (sink.push(buf[0 .. n]) < n)
 			return false;
 		return true;
-	}
-}
-
-struct PullBuffer(Source) {
-	import std.experimental.allocator : IAllocator, expandArray, makeArray;
-	import flod.traits : DefaultPullType, hasGenericPull;
-	import std.stdio;
-
-	Source source;
-	IAllocator allocator;
-
-	void[] buf;
-	size_t readOffset;
-	size_t peekOffset;
-
-	static if (is(DefaultPullType!Source)) {
-		alias PullType = DefaultPullType!Source;
-		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
-		void consume()(size_t size) { doConsume!PullType(size); }
-	}
-	static if (hasGenericPull!Source) {
-		const(T)[] peek(T)(size_t size) { return doPeek!T(size); }
-		void consume(T)(size_t size) { doConsume!T(size); }
-	}
-
-	const(T)[] doPeek(T)(size_t size)
-	{
-		T[] tbuf = cast(T[]) buf;
-		if (peekOffset + size > tbuf.length) {
-			writefln("PullBuffer expected %d < available %d", peekOffset + size, tbuf.length);
-			if (!tbuf)
-				tbuf = allocator.makeArray!T(4096);
-			else
-				allocator.expandArray(tbuf, ((peekOffset + size + 4095) & ~size_t(4095)) - tbuf.length);
-			buf = tbuf;
-			writefln("PullBuffer grow %d", buf.length);
-		}
-		if (peekOffset + size > readOffset) {
-			size_t r = source.pull(tbuf[readOffset .. $]);
-			readOffset += r;
-		}
-		return tbuf[peekOffset .. $];
-	}
-
-	void doConsume(T)(size_t size)
-	{
-		T[] tbuf = cast(T[]) buf;
-		peekOffset += size;
-		if (peekOffset == tbuf.length) {
-			writefln("PullBuffer reset %d", buf.length);
-			peekOffset = 0;
-			readOffset = 0;
-		}
 	}
 }
 

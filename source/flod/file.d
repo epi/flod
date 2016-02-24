@@ -6,6 +6,8 @@
  */
 module flod.file;
 
+version(FlodBloat):
+
 import flod.pipeline;
 import flod.traits;
 

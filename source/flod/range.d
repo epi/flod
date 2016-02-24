@@ -2,6 +2,8 @@
  */
 module flod.range;
 
+version(FlodBloat):
+
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 import std.traits : isScalarType;
 
