@@ -6,6 +6,8 @@
  */
 module flod.traits;
 
+import flod.meta : isType, ReplaceWithMask, str;
+
 private struct DummyPullSource {
 	size_t pull(T)(T[] buf) { return buf.length; }
 }
@@ -24,52 +26,11 @@ private struct DummyAllocSink {
 	void commit(T = ubyte)(size_t n) {}
 }
 
-// Workaround for https://issues.dlang.org/show_bug.cgi?id=15623
-private bool canInstantiate(alias Template, Parameters...)() {
-	return is(Template!Parameters);
-//private template canInstantiate(alias Template, Parameters...) {
-//	enum canInstantiate = is(Template!Parameters);
-}
-
-unittest
-{
-	static struct HasFoo { void foo() {} }
-	static struct NoFoo {}
-	static struct CallsFoo(S) {
-		S s;
-		void bar() { s.foo(); }
-	}
-	static assert( canInstantiate!(CallsFoo, HasFoo));
-	static assert(!canInstantiate!(CallsFoo, NoFoo));
-}
-
-
 private template test(alias req, alias S, Params...) {
-	static if (!canInstantiate!(S, Params))
+	static if (!isType!(S, Params))
 		enum bool test = false;
 	else
 		enum bool test = req!(S!Params);
-}
-
-private template Subs(ulong mask, ReplacementForZeros, Types...) {
-	alias What = ReplacementForZeros;
-	import std.meta : AliasSeq;
-	static if (Types.length == 0)
-		alias Subs = AliasSeq!();
-	else {
-		static if (mask & 1)
-			alias Subs = AliasSeq!(Subs!(mask >> 1, What, Types[0 .. $ - 1]), Types[$ - 1]);
-		else
-			alias Subs = AliasSeq!(Subs!(mask >> 1, What, Types[0 .. $ - 1]), What);
-	}
-}
-
-unittest
-{
-	static struct Empty {}
-	struct Z(Params...) {}
-	alias List = Subs!(0b011011, Empty, int, bool, float, uint, ulong, double);
-	static assert(is(Z!List == Z!(Empty, bool, float, Empty, ulong, double)));
 }
 
 // test if S!Types can be instantiated and fullfills req
@@ -77,21 +38,24 @@ unittest
 private template onlyValidFor(alias req, alias S, Types...) {
 	static struct Empty {}
 	template sub(ulong mask) {
-		static if (test!(req, S, Subs!(mask, Empty, Types))) {
-			// pragma(msg, req.stringof, " was true also for ", S.stringof, " with ", Subs!(mask, Empty, Types).stringof);
+		static if (test!(req, S, ReplaceWithMask!(mask, Empty, Types))) {
+			//pragma(msg, req.stringof, " was true also for ", S.stringof, " with ", ReplaceWithMask!(mask, Empty, Types).stringof);
 			enum bool sub = false;
 		}
 		else static if (mask == 0) {
-			// pragma(msg, req.stringof, " was true for ", S.stringof, " only with ", Types.stringof);
+			//pragma(msg, req.stringof, " was true for ", S.stringof, " only with ", Types.stringof);
 			enum bool sub = true;
 		}
 		else {
-			// pragma(msg, "ok, cannot ", req.stringof, " for ", S.stringof, " ! ", Subs!(mask, Empty, Types).stringof);
+			//pragma(msg, "ok, cannot ", req.stringof, " for ", S.stringof, "!", ReplaceWithMask!(mask, Empty, Types).stringof);
 			enum bool sub = sub!(mask - 1);
 		}
 	}
 
-	enum onlyValidFor = test!(req, S, Types) && sub!((1UL << Types.length) - 2);
+	static if (!test!(req, S, Types))
+		enum onlyValidFor = false;
+	else
+		enum onlyValidFor = sub!((1UL << Types.length) - 2);
 }
 
 private template WriteBufferType(alias buf) {
@@ -113,7 +77,7 @@ bool canRun(S)()
 		{
 			S x;
 			x.run();
-		});
+		}());
 }
 
 // TODO: make it a template enum. A Function generates template bloat
@@ -122,7 +86,7 @@ bool canStep(S)()
 	return __traits(compiles,
 		{
 			S x;
-			while (x.step()) {}
+			while (x.step() == 0) {}
 		});
 }
 
@@ -159,6 +123,7 @@ private bool canPull(S)()
 	static struct CanPullPOD { bool dummy; float justForTest; }
 	auto getPullPtr(ref S s)
 	{
+		import std.traits;
 		static if (is(typeof(&s.pull!())))
 			return &s.pull!();
 		else static if (is(typeof(&s.pull!CanPullPOD)))
@@ -282,6 +247,11 @@ template hasPeek(S) {
 	enum hasPeek = canPeek!S;
 }
 
+template hasGenericPeek(S) {
+	static struct CanPeekPOD { uint meaningless; short dummy; real justForTest; }
+	enum hasGenericPeek = is(typeof({ S s; auto b = s.peek!CanPeekPOD(1); return b[0]; }()) == const(CanPeekPOD));
+}
+
 template DefaultPeekType(S) {
 	static if (is(typeof({ S s; return s.peek(1)[0]; }()) T)) {
 		alias DefaultPeekType = T;
@@ -389,25 +359,20 @@ unittest
 	static assert(isPeekSource!PullSinkSource);
 }
 
-/// Returns `true` if `Ss` is a source which writes data by calling `push()`.
-template isPushSource(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			enum bool impl =
-				   onlyValidFor!(canRun,   S, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPushSink)
-				|| onlyValidFor!(canPush,  S, DummyPushSink)
-				|| onlyValidFor!(canAlloc, S, DummyPushSink)
-				|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canRun,   S, DummyPullSource, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPullSource, DummyPushSink);
-		}
-	}
-	enum bool isPushSource = impl!();
+/**
+Returns `true` if `Ss` is a source which writes data by calling `push()`.
+Bugs: Always returns `false` for a non-copyable nested `struct`.
+*/
+template isPushSource(alias S) {
+	enum bool isPushSource =
+		   onlyValidFor!(canRun,   S, DummyPushSink)
+		|| onlyValidFor!(canStep,  S, DummyPushSink)
+		|| onlyValidFor!(canPush,  S, DummyPushSink)
+		|| onlyValidFor!(canAlloc, S, DummyPushSink)
+		|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyPushSink)
+		|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyPushSink)
+		|| onlyValidFor!(canRun,   S, DummyPullSource, DummyPushSink)
+		|| onlyValidFor!(canStep,  S, DummyPullSource, DummyPushSink);
 }
 
 unittest
@@ -753,4 +718,19 @@ template isSinkOnly(Ss...) {
 
 template isStreamComponent(Ss...) {
 	enum isStreamComponent = isSource!Ss || isSink!Ss;
+}
+
+template isPassiveSource(P) {
+	enum isPassiveSource = isPeekSource!P || isPullSource!P;
+}
+
+template isRunnable(P) {
+	enum isRunnable = canRun!P || canStep!P;
+}
+
+template isActiveSource(alias S) {
+	enum isActiveSource = isPushSource!S || isAllocSource!S;
+}
+template isActiveSink(alias S) {
+	enum isActiveSink = isPullSink!S || isPeekSink!S;
 }
