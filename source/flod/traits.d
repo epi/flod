@@ -186,6 +186,7 @@ template DefaultPullType(S) {
 		}());
 }
 
+/+
 // TODO: make it a template enum. A Function generates template bloat
 private bool canAlloc(S)()
 {
@@ -211,6 +212,49 @@ private bool canAlloc(S)()
 				alias T = WriteBufferType!buf;
 				s.commit!T(buf.length);
 			}()));
+}+/
+
+template canAlloc(S) {
+	enum canAlloc =
+		   is(AllocElementType!(S, PassTemplateArgs.none))
+		|| is(AllocElementType!(S, PassTemplateArgs.commit))
+		|| is(AllocElementType!(S, PassTemplateArgs.both));
+}
+
+enum PassTemplateArgs {
+	none = 0,
+	commit = 2,
+	consume = 2,
+	both = 3,
+}
+
+private template AllocElementType(S, PassTemplateArgs pass) {
+	static if (pass == PassTemplateArgs.none) {
+		alias AllocElementType = typeof({
+				S s;
+				auto buf = s.alloc(size_t(1));
+				alias T = WriteBufferType!buf;
+				s.commit(buf.length);
+				return T.init;
+			}());
+	} else static if (pass == PassTemplateArgs.commit) {
+		alias AllocElementType = typeof({
+				S s;
+				auto buf = s.alloc(size_t(1));
+				alias T = WriteBufferType!buf;
+				s.commit!T(buf.length);
+				return T.init;
+			}());
+	} else static if (pass == PassTemplateArgs.both) {
+				static struct SomePOD { uint meaningless; long justForTest; }
+		alias AllocElementType = typeof({
+				S s;
+				auto buf = s.alloc!SomePOD(size_t(1));
+				alias T = WriteBufferType!buf;
+				s.commit!T(buf.length);
+				return T.init;
+			}());
+	}
 }
 
 // TODO: make it a template enum. A Function generates template bloat
