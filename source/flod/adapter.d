@@ -1,4 +1,8 @@
-/** Adapters connecting stream components with incompatible interfaces.
+/** Adapters connecting stages with incompatible interfaces.
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
 module flod.adapter;
 
@@ -7,7 +11,7 @@ import flod.traits;
 struct DefaultPullPeekAdapter(Source) {
 	import std.experimental.allocator : IAllocator, processAllocator, expandArray, makeArray;
 	import std.stdio;
-	import flod.traits : DefaultPullType, hasGenericPull;
+	import flod.traits : FixedPullType;
 	import flod.meta : moveIfNonCopyable;
 
 	private {
@@ -24,12 +28,20 @@ struct DefaultPullPeekAdapter(Source) {
 		this.allocator = allocator;
 	}
 
-	static if (is(DefaultPullType!Source)) {
+	static if (is(FixedPullType!Source)) {
 		alias PullType = DefaultPullType!Source;
-		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
-		void consume()(size_t size) { doConsume!PullType(size); }
-	}
-	static if (hasGenericPull!Source) {
+		const(T)[] peek(T = PullType)(size_t size)
+			if (is(T == PullType))
+		{
+			return doPeek!PullType(size);
+		}
+		void consume(T = PullType)(size_t size)
+			if (is(T == PullType))
+		{
+			doConsume!PullType(size);
+		}
+	} else {
+		// pull can work with any element type
 		const(T)[] peek(T = ubyte)(size_t size) { return doPeek!T(size); }
 		void consume(T = ubyte)(size_t size) { doConsume!T(size); }
 	}
@@ -73,10 +85,13 @@ struct DefaultPeekPullAdapter(Source) {
 	size_t pull(T)(T[] buf)
 	{
 		import std.algorithm : min;
-		static if (hasGenericPeek!Source) {
+		static if (is(FixedPeekType!Source == T)) {
+			auto inbuf = source.peek(buf.length);
+		} else static if (!is(FixedPeekType!Source)) {
 			auto inbuf = source.peek!T(buf.length);
 		} else {
-			auto inbuf = source.peek(buf.length);
+			import flod.meta : str;
+			pragma(msg, str!Source ~ " does not support type " ~ str!T);
 		}
 		auto l = min(buf.length, inbuf.length);
 		buf[0 .. l] = inbuf[0 .. l];
