@@ -6,10 +6,13 @@
  */
 module flod.file;
 
+
 import flod.pipeline;
 import flod.traits;
+import flod.meta : NonCopyable;
 
 struct MmappedFile {
+	mixin NonCopyable;
 	import std.string : toStringz;
 	import std.exception : enforce;
 	import core.sys.posix.fcntl : open, O_RDONLY;
@@ -51,6 +54,8 @@ struct MmappedFile {
 	}
 }
 static assert(isPeekSource!MmappedFile);
+
+version(FlodBloat):
 
 struct Xor(Source) {
 	Source source;

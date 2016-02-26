@@ -6,6 +6,8 @@
  */
 module flod.traits;
 
+import flod.meta : isType, ReplaceWithMask, str;
+
 private struct DummyPullSource {
 	size_t pull(T)(T[] buf) { return buf.length; }
 }
@@ -24,74 +26,36 @@ private struct DummyAllocSink {
 	void commit(T = ubyte)(size_t n) {}
 }
 
-// Workaround for https://issues.dlang.org/show_bug.cgi?id=15623
-private bool canInstantiate(alias Template, Parameters...)() {
-	return is(Template!Parameters);
-//private template canInstantiate(alias Template, Parameters...) {
-//	enum canInstantiate = is(Template!Parameters);
-}
-
-unittest
-{
-	static struct HasFoo { void foo() {} }
-	static struct NoFoo {}
-	static struct CallsFoo(S) {
-		S s;
-		void bar() { s.foo(); }
-	}
-	static assert( canInstantiate!(CallsFoo, HasFoo));
-	static assert(!canInstantiate!(CallsFoo, NoFoo));
-}
-
-
-private template test(alias req, alias S, Params...) {
-	static if (!canInstantiate!(S, Params))
-		enum bool test = false;
-	else
-		enum bool test = req!(S!Params);
-}
-
-private template Subs(ulong mask, ReplacementForZeros, Types...) {
-	alias What = ReplacementForZeros;
-	import std.meta : AliasSeq;
-	static if (Types.length == 0)
-		alias Subs = AliasSeq!();
-	else {
-		static if (mask & 1)
-			alias Subs = AliasSeq!(Subs!(mask >> 1, What, Types[0 .. $ - 1]), Types[$ - 1]);
-		else
-			alias Subs = AliasSeq!(Subs!(mask >> 1, What, Types[0 .. $ - 1]), What);
-	}
-}
-
-unittest
-{
-	static struct Empty {}
-	struct Z(Params...) {}
-	alias List = Subs!(0b011011, Empty, int, bool, float, uint, ulong, double);
-	static assert(is(Z!List == Z!(Empty, bool, float, Empty, ulong, double)));
-}
-
 // test if S!Types can be instantiated and fullfills req
 // but fails to do so if any of Types is substituted with empty struct
 private template onlyValidFor(alias req, alias S, Types...) {
+	template test(Params...) {
+		static if (!isType!(S, Params))
+			enum bool test = false;
+		else
+			enum bool test = req!(S!Params);
+	}
+
 	static struct Empty {}
 	template sub(ulong mask) {
-		static if (test!(req, S, Subs!(mask, Empty, Types))) {
-			// pragma(msg, req.stringof, " was true also for ", S.stringof, " with ", Subs!(mask, Empty, Types).stringof);
+		static if (test!(ReplaceWithMask!(mask, Empty, Types))) {
+			//pragma(msg, req.stringof, " was true also for ", S.stringof, " with ", ReplaceWithMask!(mask, Empty, Types).stringof);
 			enum bool sub = false;
 		}
 		else static if (mask == 0) {
-			// pragma(msg, req.stringof, " was true for ", S.stringof, " only with ", Types.stringof);
+			//pragma(msg, req.stringof, " was true for ", S.stringof, " only with ", Types.stringof);
 			enum bool sub = true;
 		}
 		else {
-			// pragma(msg, "ok, cannot ", req.stringof, " for ", S.stringof, " ! ", Subs!(mask, Empty, Types).stringof);
+			//pragma(msg, "ok, cannot ", req.stringof, " for ", S.stringof, "!", ReplaceWithMask!(mask, Empty, Types).stringof);
 			enum bool sub = sub!(mask - 1);
 		}
 	}
 
-	enum onlyValidFor = test!(req, S, Types) && sub!((1UL << Types.length) - 2);
+	static if (!test!Types)
+		enum onlyValidFor = false;
+	else
+		enum onlyValidFor = sub!((1UL << Types.length) - 2);
 }
 
 private template WriteBufferType(alias buf) {
@@ -106,208 +70,194 @@ private template WriteBufferType(alias buf) {
 		}());
 }
 
-// TODO: make it a template enum. A Function generates template bloat
-bool canRun(S)()
-{
-	return __traits(compiles,
+template hasRun(S) {
+	enum bool hasRun = __traits(compiles,
 		{
 			S x;
 			x.run();
-		});
-}
-
-// TODO: make it a template enum. A Function generates template bloat
-bool canStep(S)()
-{
-	return __traits(compiles,
-		{
-			S x;
-			while (x.step()) {}
-		});
-}
-
-// TODO: make it a template enum. A Function generates template bloat
-private bool canPush(S)()
-{
-	static struct CanPushPOD { uint meaningless; }
-	auto getPushPtr(ref S s)
-	{
-		static if (is(typeof(&s.push!())))
-			return &s.push!();
-		else static if (is(typeof(&s.push!CanPushPOD)))
-			return &s.push!CanPushPOD;
-		else static if (is(typeof(&s.push)))
-			return &s.push;
-		else
-			return null;
-	}
-	return is(typeof(
-			{
-				S x;
-				auto f = getPushPtr(x);
-				import std.traits : ParameterTypeTuple;
-				alias B = ParameterTypeTuple!(typeof(f))[0];
-				alias T = typeof({ B b; return b[0]; }());
-				T[] buf;
-				return x.push(buf);
-			}()) : size_t);
-}
-
-// TODO: make it a template enum. A Function generates template bloat
-private bool canPull(S)()
-{
-	static struct CanPullPOD { bool dummy; float justForTest; }
-	auto getPullPtr(ref S s)
-	{
-		static if (is(typeof(&s.pull!())))
-			return &s.pull!();
-		else static if (is(typeof(&s.pull!CanPullPOD)))
-			return &s.pull!CanPullPOD;
-		else static if (is(typeof(&s.pull)))
-			return &s.pull;
-		else
-			return null;
-	}
-	return is(typeof(
-			{
-				S s;
-				auto f = getPullPtr(s);
-				import std.traits : ParameterTypeTuple;
-				alias B = ParameterTypeTuple!(typeof(f))[0];
-				alias T = typeof({ B b; return b[0].init; }());
-				T[] buf;
-				return s.pull(buf);
-			}()) : size_t);
-}
-
-bool hasGenericPull(S)() {
-	static struct CanPullPOD { bool dummy; float justForTest; }
-	auto getPullPtr(ref S s)
-	{
-		static if (is(typeof(&s.pull!CanPullPOD)))
-			return &s.pull!CanPullPOD;
-		else
-			return null;
-	}
-	return is(typeof(
-			{
-				S s;
-				auto f = getPullPtr(s);
-				import std.traits : ParameterTypeTuple;
-				alias B = ParameterTypeTuple!(typeof(f))[0];
-				alias T = typeof({ B b; return b[0].init; }());
-				T[] buf;
-				return s.pull(buf);
-			}()) : size_t);
-}
-
-template DefaultPullType(S) {
-	auto getPullPtr(ref S s)
-	{
-		static if (is(typeof(&s.pull!())))
-			return &s.pull!();
-		else static if (is(typeof(&s.pull)))
-			return &s.pull;
-		else
-			return null;
-	}
-	alias DefaultPullType = typeof(
-		{
-			S s;
-			auto f = getPullPtr(s);
-			import std.traits : ParameterTypeTuple;
-			alias B = ParameterTypeTuple!(typeof(f))[0];
-			B b; return b[0].init;
 		}());
 }
 
-// TODO: make it a template enum. A Function generates template bloat
-private bool canAlloc(S)()
-{
-	static struct CanAllocPOD { uint meaningless; long justForTest; }
-	return is(typeof(
-			{
-				S s;
-				auto buf = s.alloc(size_t(1));
-				alias T = WriteBufferType!buf;
-				s.commit(buf.length);
-			}()))
-		|| is(typeof(
-			{
-				S s;
-				auto buf = s.alloc(size_t(1));
-				alias T = WriteBufferType!buf;
-				s.commit!T(buf.length);
-			}()))
-		|| is(typeof(
-			{
-				S s;
-				auto buf = s.alloc!CanAllocPOD(size_t(1));
-				alias T = WriteBufferType!buf;
-				s.commit!T(buf.length);
+template hasStep(S) {
+	enum bool hasStep = __traits(compiles,
+		{
+			S x;
+			while (x.step() == 0) {}
+		});
+}
+
+// Defines a unique POD struct type
+private struct SomePOD(string cookie = __FILE__ ~ ":" ~ __LINE__.stringof) { string meaningless = cookie; }
+
+///
+template isRunnable(P) {
+	enum bool isRunnable = hasRun!P || hasStep!P;
+}
+
+private template PushElementType(S, Args...) {
+	template ElementType(Func) {
+		import std.traits : Unqual;
+		alias ElementType = Unqual!(typeof({
+				S x;
+				import std.traits : ParameterTypeTuple;
+				alias B = ParameterTypeTuple!Func[0];
+				alias T = typeof({ B b; return b[0]; }());
+				const(T)[] buf;
+				size_t s = x.push(buf);
+				return buf[0];
 			}()));
-}
-
-// TODO: make it a template enum. A Function generates template bloat
-private bool canPeek(S)()
-{
-	static struct CanPeekPOD { uint meaningless; short dummy; real justForTest; }
-	return is(typeof(
-			{
-				S s;
-				auto buf = s.peek(size_t(1));
-				auto el1 = buf[0];
-				auto el2 = buf[$ - 1];
-				s.consume(buf.length);
-			}()))
-		|| is(typeof(
-			{
-				S s;
-				auto buf = s.peek(size_t(1));
-				auto el1 = buf[0];
-				auto el2 = buf[$ - 1];
-				alias T = typeof(buf[0]);
-				s.consume!T(buf.length);
-			}()))
-		|| is(typeof({
-				S s;
-				auto buf = s.peek!CanPeekPOD(size_t(1));
-				auto el1 = buf[0];
-				auto el2 = buf[$ - 1];
-				s.consume!(typeof(el2))(buf.length);
-			}()));
-}
-
-template hasPeek(S) {
-	enum hasPeek = canPeek!S;
-}
-
-template DefaultPeekType(S) {
-	static if (is(typeof({ S s; return s.peek(1)[0]; }()) T)) {
-		alias DefaultPeekType = T;
+	}
+	static if (is(typeof(Args[0]) == typeof(null))) {
+		alias PushElementType = ElementType!(typeof({ S s; return &s.push; }()));
+	} else {
+		alias PushElementType = ElementType!(typeof({ S s; return &s.push!Args; }()));
 	}
 }
 
-/// Returns `true` if `Ss` is a source from which data can be read by calling `pull()`.
-template isPullSource(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			static if (is(S))
-				enum bool impl = canPull!S;
+///
+template isPushable(S) {
+	enum bool isPushable =
+		   is(PushElementType!(S))
+		|| is(PushElementType!(S, SomePOD!"isPushable"))
+		|| is(PushElementType!(S, null));
+}
+
+///
+template FixedPushType(S) {
+	static if (!is(PushElementType!(S, SomePOD!"FixedPushType"))) {
+		static if (is(PushElementType!(S) T))
+			alias FixedPushType = T;
+		else static if (is(PushElementType!(S, null) U))
+			alias FixedPushType = U;
+	}
+}
+
+private template PullElementType(S, Args...) {
+	template ElementType(Func) {
+		alias ElementType = typeof({
+				S s;
+				import std.traits : ParameterTypeTuple;
+				alias B = ParameterTypeTuple!Func[0];
+				alias T = typeof({ B b; return b[0].init; }());
+				T[] buf;
+				size_t n = s.pull(buf);
+				return buf[0];
+			}());
+	}
+	static if (is(typeof(Args[0]) == typeof(null))) {
+		alias PullElementType = ElementType!(typeof({ S s; return &s.pull; }()));
+	} else {
+		alias PullElementType = ElementType!(typeof({ S s; return &s.pull!Args; }()));
+	}
+}
+
+///
+template isPullable(S) {
+	enum bool isPullable =
+		   is(PullElementType!(S))
+		|| is(PullElementType!(S, SomePOD!"isPullable"))
+		|| is(PullElementType!(S, null));
+}
+
+///
+template FixedPullType(S) {
+	static if (!is(PushElementType!(S, SomePOD!"FixedPushType"))) {
+		static if (is(PushElementType!(S) T))
+			alias FixedPushType = T;
+		else static if (is(PushElementType!(S, null) U))
+			alias FixedPushType = U;
+	}
+}
+
+private template AllocElementType(S, bool templateCommit, AllocArgs...) {
+	alias AllocElementType = typeof({
+			S s;
+			static if (AllocArgs.length)
+				auto buf = s.alloc!AllocArgs(size_t(1));
 			else
-				enum bool impl =
-					   onlyValidFor!(canPull, S, DummyPullSource)
-					|| onlyValidFor!(canPull, S, DummyPeekSource);
-		}
-	}
-	enum bool isPullSource = impl!();
+				auto buf = s.alloc(size_t(1));
+			alias T = WriteBufferType!buf;
+			static if (templateCommit)
+				s.commit!T(buf.length);
+			else
+				s.commit(buf.length);
+			return T.init;
+		}());
 }
 
-unittest
-{
+///
+template isAllocable(S) {
+	enum isAllocable =
+		   is(AllocElementType!(S, false))
+		|| is(AllocElementType!(S, true))
+		|| is(AllocElementType!(S, true, SomePOD!"isAllocable"));
+}
+
+private template PeekElementType(S, bool templateConsume, PeekArgs...) {
+	alias PeekElementType = typeof({
+			S s;
+			static if (PeekArgs.length)
+				auto buf = s.peek!PeekArgs(size_t(1));
+			else
+				auto buf = s.peek(size_t(1));
+			auto el1 = buf[0];
+			auto el2 = buf[$ - 1];
+			alias T = typeof(buf[0]);
+			static if (templateConsume)
+				s.consume!T(buf.length);
+			else
+				s.consume(buf.length);
+			return T.init;
+		}());
+}
+
+///
+template isPeekable(S) {
+	enum bool isPeekable =
+		   is(PeekElementType!(S, false))
+		|| is(PeekElementType!(S, true))
+		|| is(PeekElementType!(S, true, SomePOD!"isPeekable"));
+}
+
+///
+template DefaultPeekType(S) {
+	import std.traits : Unqual;
+	static if (is(PeekElementType!(S, false) T))
+		alias DefaultPeekType = Unqual!T;
+	else static if (is(PeekElementType!(S, true) U))
+		alias DefaultPeekType = Unqual!U;
+}
+
+///
+template FixedPeekType(S) {
+	static if (!is(PeekElementType!(S, true, SomePOD!"FixedPeekType")))
+		alias FixedPeekType = DefaultPeekType;
+}
+
+private template testStage(alias testType, alias testTemplate, S...) {
+	static if (S.length != 1) {
+		enum testStage = false;
+	} else {
+		alias Z = S[0];
+		static if (is(Z) && !is(typeof(testType) : typeof(null)))
+			enum bool testStage = testType!Z;
+		else static if (__traits(isTemplate, Z) && !is(typeof(testTemplate) : typeof(null)))
+			enum bool testStage = testTemplate!Z;
+		else
+			enum bool testStage = false;
+	}
+}
+/// Returns `true` if `S` is a source from which data can be read by calling `pull()`.
+template isPullSource(S...) {
+	template templ(alias Z) {
+		enum bool templ =
+			   onlyValidFor!(isPullable, Z, DummyPullSource)
+			|| onlyValidFor!(isPullable, Z, DummyPeekSource);
+	}
+	enum bool isPullSource = testStage!(isPullable, templ, S);;
+}
+
+unittest {
 	static struct ZeroSource {
 		size_t pull(T)(T[] buf)
 		{
@@ -340,26 +290,17 @@ unittest
 	static assert(isPullSource!PeekForward);
 }
 
-/// Returns `true` if `Ss` is a source from which data can be read by calling `peek()` and `consume()`.
-template isPeekSource(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			static if (is(S))
-				enum bool impl = canPeek!S;
-			else
-				enum bool impl =
-					   onlyValidFor!(canPeek, S, DummyPullSource)
-					|| onlyValidFor!(canPeek, S, DummyPeekSource);
-		}
+/// Returns `true` if `S` is a source from which data can be read by calling `peek()` and `consume()`.
+template isPeekSource(S...) {
+	template templ(alias Z) {
+	enum bool templ =
+		   onlyValidFor!(isPeekable, Z, DummyPullSource)
+		|| onlyValidFor!(isPeekable, Z, DummyPeekSource);
 	}
-	enum bool isPeekSource = impl!();
+	enum bool isPeekSource = testStage!(isPeekable, templ, S);
 }
 
-unittest
-{
+unittest {
 	static struct ZeroSource {
 		const(ubyte)[] peek(size_t n) { return new ubyte[n]; }
 		void consume(size_t n) {};
@@ -389,29 +330,23 @@ unittest
 	static assert(isPeekSource!PullSinkSource);
 }
 
-/// Returns `true` if `Ss` is a source which writes data by calling `push()`.
-template isPushSource(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			enum bool impl =
-				   onlyValidFor!(canRun,   S, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPushSink)
-				|| onlyValidFor!(canPush,  S, DummyPushSink)
-				|| onlyValidFor!(canAlloc, S, DummyPushSink)
-				|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canRun,   S, DummyPullSource, DummyPushSink)
-				|| onlyValidFor!(canStep,  S, DummyPullSource, DummyPushSink);
-		}
+/**
+Returns `true` if `S` is a source which writes data by calling `push()`.
+Bugs: Always returns `false` for a non-copyable nested `struct`.
+*/
+template isPushSource(S...) {
+	template isPushSourceTempl(alias Z) {
+		enum isPushSourceTempl =
+			   onlyValidFor!(isRunnable,  Z, DummyPushSink)
+			|| onlyValidFor!(isPushable,  Z, DummyPushSink)
+			|| onlyValidFor!(isAllocable, Z, DummyPushSink)
+			|| onlyValidFor!(isRunnable,  Z, DummyPeekSource, DummyPushSink)
+			|| onlyValidFor!(isRunnable,  Z, DummyPullSource, DummyPushSink);
 	}
-	enum bool isPushSource = impl!();
+	enum bool isPushSource = testStage!(null, isPushSourceTempl, S);
 }
 
-unittest
-{
+unittest {
 	static struct NullSource(Sink) {
 		Sink sink;
 		void run()() {
@@ -422,8 +357,7 @@ unittest
 	static assert(isPushSource!NullSource);
 }
 
-unittest
-{
+unittest {
 	static struct NullSource(Sink) {
 		Sink sink;
 		void run() {
@@ -434,8 +368,7 @@ unittest
 	static assert(isPushSource!NullSource);
 }
 
-unittest
-{
+unittest {
 	static struct NullSource(Sink) {
 		Sink sink;
 		bool step() {
@@ -447,8 +380,7 @@ unittest
 	static assert(isPushSource!NullSource);
 }
 
-unittest
-{
+unittest {
 	static struct Forward(Sink) {
 		Sink sink;
 		auto push(T)(const(T)[] buf) {
@@ -458,38 +390,33 @@ unittest
 	static assert(isPushSource!Forward);
 }
 
-unittest
-{
-	struct MyOwnPOD { double x; }
+unittest {
 	static struct Forward(Sink) {
 		Sink sink;
-		auto push()(const(MyOwnPOD)[] buf) {
+		auto push()(const(SomePOD!())[] buf) {
 			return sink.push(buf);
 		}
 	}
 	static assert(isPushSource!Forward);
 }
 
-unittest
-{
-	struct MyOwnPOD { double x; }
+unittest {
 	static struct Forward(Sink) {
 		Sink sink;
-		auto push(const(MyOwnPOD)[] buf) {
+		auto push(const(SomePOD!())[] buf) {
 			return sink.push(buf);
 		}
 	}
 	static assert(isPushSource!Forward);
 }
 
-unittest
-{
-	struct MyOwnPOD { double x; }
+unittest {
+	alias P = SomePOD!();
 	static struct Forward(Sink) {
 		Sink sink;
-		MyOwnPOD[] buf;
+		P[] buf;
 		auto alloc(size_t n) {
-			buf = new MyOwnPOD[n];
+			buf = new P[n];
 			return buf;
 		}
 		void commit(size_t s) {
@@ -499,8 +426,7 @@ unittest
 	static assert(isPushSource!Forward);
 }
 
-unittest
-{
+unittest {
 	static struct NotASource(Sink) {
 		Sink sink;
 		void run()() {}
@@ -511,8 +437,7 @@ unittest
 	static assert(!isPushSource!NotASource);
 }
 
-unittest
-{
+unittest {
 	static struct Driver(Source, Sink) {
 		Source source;
 		Sink sink;
@@ -525,8 +450,7 @@ unittest
 	static assert(isPushSource!Driver);
 }
 
-unittest
-{
+unittest {
 	static struct Driver(Source, Sink) {
 		Source source;
 		Sink sink;
@@ -539,8 +463,7 @@ unittest
 	static assert(isPushSource!Driver);
 }
 
-unittest
-{
+unittest {
 	static struct NotADriver(Source, Sink) {
 		Source source;
 		Sink sink;
@@ -552,65 +475,49 @@ unittest
 	static assert(!isPushSource!NotADriver);
 }
 
-/// Returns `true` if `Ss` is a source which writes data by calling `alloc()` and `commit()`.
-template isAllocSource(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool isAllocSource = false;
-		} else {
-			alias S = Ss[0];
-			enum bool impl =
-				   onlyValidFor!(canRun,   S, DummyAllocSink)
-				|| onlyValidFor!(canStep,  S, DummyAllocSink)
-				|| onlyValidFor!(canPush,  S, DummyAllocSink)
-				|| onlyValidFor!(canAlloc, S, DummyAllocSink)
-				|| onlyValidFor!(canRun,   S, DummyPeekSource, DummyAllocSink)
-				|| onlyValidFor!(canStep,  S, DummyPeekSource, DummyAllocSink)
-				|| onlyValidFor!(canRun,   S, DummyPullSource, DummyAllocSink)
-				|| onlyValidFor!(canStep,  S, DummyPullSource, DummyAllocSink);
-		}
+/// Returns `true` if `S` is a source which writes data by calling `alloc()` and `commit()`.
+template isAllocSource(S...) {
+	template isAllocSourceTempl(alias Z) {
+		enum isAllocSourceTempl =
+			   onlyValidFor!(isRunnable,  Z, DummyAllocSink)
+			|| onlyValidFor!(isPushable,  Z, DummyAllocSink)
+			|| onlyValidFor!(isAllocable, Z, DummyAllocSink)
+			|| onlyValidFor!(isRunnable,  Z, DummyPeekSource, DummyAllocSink)
+			|| onlyValidFor!(isRunnable,  Z, DummyPullSource, DummyAllocSink);
 	}
-	enum bool isAllocSource = impl!();
+	enum isAllocSource = testStage!(null, isAllocSourceTempl, S);
 }
 
-/// Returns `true` if `Ss` is a sink to which data can be written by calling `push()`.
-template isPushSink(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			static if (is(S))
-				enum bool impl = canPush!S;
-			else
-				enum bool impl =
-					   onlyValidFor!(canPush, S, DummyPushSink)
-					|| onlyValidFor!(canPush, S, DummyAllocSink);
-		}
-	}
-	enum bool isPushSink = impl!();
+unittest {
+	static assert(!isAllocSource!int);
 }
 
-/// Returns `true` if `Ss` is a sink to which data can be written by calling `alloc()` and `commit()`.
-template isAllocSink(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			static if (is(S))
-				enum bool impl = canAlloc!S;
-			else
-				enum bool impl =
-					   onlyValidFor!(canAlloc, S, DummyPushSink)
-					|| onlyValidFor!(canAlloc, S, DummyAllocSink);
-		}
+/// Returns `true` if `S` is a sink to which data can be written by calling `push()`.
+template isPushSink(S...) {
+	template templ(alias Z) {
+		enum bool templ =
+			   onlyValidFor!(isPushable, Z, DummyPushSink)
+			|| onlyValidFor!(isPushable, Z, DummyAllocSink);
 	}
-	enum bool isAllocSink = impl!();
+	enum bool isPushSink = testStage!(isPushable, templ, S);
 }
 
-unittest
-{
+unittest {
+	static assert(!isPushSink!int);
+}
+
+/// Returns `true` if `S` is a sink to which data can be written by calling `alloc()` and `commit()`.
+template isAllocSink(S...) {
+	private template templ(alias S) {
+		enum bool templ =
+			   onlyValidFor!(isAllocable, S, DummyPushSink)
+			|| onlyValidFor!(isAllocable, S, DummyAllocSink);
+	}
+	enum bool isAllocSink = testStage!(isAllocable, templ, S);
+}
+
+unittest {
+	static assert(!isAllocSink!int);
 	static struct NullSink {
 		ubyte[] alloc(size_t n) { return new ubyte[n]; }
 		void commit(size_t n) {}
@@ -641,29 +548,20 @@ unittest
 	static assert(isAllocSink!PushSourceSink);
 }
 
-/// Returns `true` if `Ss` is a sink which reads data by calling `pull()`.
-template isPullSink(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			enum bool impl =
-				   onlyValidFor!(canRun,  S, DummyPullSource)
-				|| onlyValidFor!(canStep, S, DummyPullSource)
-				|| onlyValidFor!(canPull, S, DummyPullSource)
-				|| onlyValidFor!(canPeek, S, DummyPullSource)
-				|| onlyValidFor!(canRun,  S, DummyPullSource, DummyPushSink)
-				|| onlyValidFor!(canStep, S, DummyPullSource, DummyPushSink)
-				|| onlyValidFor!(canRun,  S, DummyPullSource, DummyAllocSink)
-				|| onlyValidFor!(canStep, S, DummyPullSource, DummyAllocSink);
-		}
+/// Returns `true` if `S` is a sink which reads data by calling `pull()`.
+template isPullSink(S...) {
+	private template isPushSinkTempl(alias Z) {
+		enum isPushSinkTempl =
+			   onlyValidFor!(isRunnable, Z, DummyPullSource)
+			|| onlyValidFor!(isPullable, Z, DummyPullSource)
+			|| onlyValidFor!(isPeekable, Z, DummyPullSource)
+			|| onlyValidFor!(isRunnable, Z, DummyPullSource, DummyPushSink)
+			|| onlyValidFor!(isRunnable, Z, DummyPullSource, DummyAllocSink);
 	}
-	enum bool isPullSink = impl!();
+	enum isPullSink = testStage!(null, isPushSinkTempl, S);
 }
 
-unittest
-{
+unittest {
 	struct PullSink(Source) {
 		Source source;
 		bool step()()
@@ -683,25 +581,17 @@ unittest
 	//TODO: more tests
 }
 
-/// Returns `true` if `Ss` is a sink which reads data by calling `peek()` and `consume()`.
-template isPeekSink(Ss...) {
-	template impl() {
-		static if (Ss.length != 1) {
-			enum bool impl = false;
-		} else {
-			alias S = Ss[0];
-			enum bool impl =
-				   onlyValidFor!(canRun,  S, DummyPeekSource)
-				|| onlyValidFor!(canStep, S, DummyPeekSource)
-				|| onlyValidFor!(canPull, S, DummyPeekSource)
-				|| onlyValidFor!(canPeek, S, DummyPeekSource)
-				|| onlyValidFor!(canRun,  S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canStep, S, DummyPeekSource, DummyPushSink)
-				|| onlyValidFor!(canRun,  S, DummyPeekSource, DummyAllocSink)
-				|| onlyValidFor!(canStep, S, DummyPeekSource, DummyAllocSink);
-		}
+/// Returns `true` if `S` is a sink which reads data by calling `peek()` and `consume()`.
+template isPeekSink(S...) {
+	private template isPeekSinkTempl(alias Z) {
+		enum isPeekSinkTempl =
+			   onlyValidFor!(isRunnable, Z, DummyPeekSource)
+			|| onlyValidFor!(isPullable, Z, DummyPeekSource)
+			|| onlyValidFor!(isPeekable, Z, DummyPeekSource)
+			|| onlyValidFor!(isRunnable, Z, DummyPeekSource, DummyPushSink)
+			|| onlyValidFor!(isRunnable, Z, DummyPeekSource, DummyAllocSink);
 	}
-	enum bool isPeekSink = impl!();
+	enum bool isPeekSink = testStage!(null, isPeekSinkTempl, S);
 }
 
 unittest
@@ -720,37 +610,58 @@ unittest
 	//TODO: more tests
 }
 
-/** Returns `true` if `Ss[0]` is a source and `Ss[1]` is a sink and they both use the same
+/** Returns `true` if `S[0]` is a source and `S[1]` is a sink and they both use the same
  *  method of passing data.
  */
-template areCompatible(Ss...) if (Ss.length == 2) {
+template areCompatible(S...) if (S.length == 2) {
 	enum areCompatible =
-		   (isPeekSource!(Ss[0]) && isPeekSink!(Ss[1]))
-		|| (isPullSource!(Ss[0]) && isPullSink!(Ss[1]))
-		|| (isAllocSource!(Ss[0]) && isAllocSink!(Ss[1]))
-		|| (isPushSource!(Ss[0]) && isPushSink!(Ss[1]));
+		   (isPeekSource!(S[0]) && isPeekSink!(S[1]))
+		|| (isPullSource!(S[0]) && isPullSink!(S[1]))
+		|| (isAllocSource!(S[0]) && isAllocSink!(S[1]))
+		|| (isPushSource!(S[0]) && isPushSink!(S[1]));
 }
 
-/// Returns `true` if `Ss` is a source of any kind.
-template isSource(Ss...) {
-	enum isSource = isPeekSource!Ss || isPullSource!Ss || isAllocSource!Ss || isPushSource!Ss;
+///
+template isPassiveSource(S...) {
+	enum isPassiveSource = isPeekSource!S || isPullSource!S;
 }
 
-/// Returns `true` if `Ss` is a sink of any kind.
-template isSink(Ss...) {
-	enum isSink = isPeekSink!Ss || isPullSink!Ss || isAllocSink!Ss || isPushSink!Ss;
+///
+template isActiveSource(S...) {
+	enum isActiveSource = isPushSource!S || isAllocSource!S;
 }
 
-/// Returns `true` if `Ss` is a source but not a sink.
-template isSourceOnly(Ss...) {
-	enum isSourceOnly = isSource!Ss && !isSink!Ss;
+///
+template isPassiveSink(S...) {
+	enum isPassiveSink = isPushSink!S || isAllocSink!S;
 }
 
-/// Returns `true` if `Ss` is a sink but not a source.
-template isSinkOnly(Ss...) {
-	enum isSinkOnly = !isSource!Ss && isSink!Ss;
+///
+template isActiveSink(S...) {
+	enum isActiveSink = isPullSink!S || isPeekSink!S;
 }
 
-template isStreamComponent(Ss...) {
-	enum isStreamComponent = isSource!Ss || isSink!Ss;
+/// Returns `true` if `S` is a source of any kind.
+template isSource(S...) {
+	enum isSource = isPassiveSource!S || isActiveSource!S;
+}
+
+/// Returns `true` if `S` is a sink of any kind.
+template isSink(alias S) {
+	enum isSink = isPassiveSink!S || isActiveSink!S;
+}
+
+/// Returns `true` if `S` is a source but not a sink.
+template isSourceOnly(S...) {
+	enum isSourceOnly = isSource!S && !isSink!S;
+}
+
+/// Returns `true` if `S` is a sink but not a source.
+template isSinkOnly(S...) {
+	enum isSinkOnly = !isSource!S && isSink!S;
+}
+
+/// Returns `true` if `S` is a source or a sink.
+template isStage(S...) {
+	enum isStage = isSource!S || isSink!S;
 }

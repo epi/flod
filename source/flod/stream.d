@@ -6,6 +6,8 @@
  */
 module flod.stream;
 
+version(FlodBloat):
+
 import flod.pipeline : isPipeline;
 
 /** A _stream based on pipeline P.
