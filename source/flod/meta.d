@@ -65,6 +65,8 @@ unittest {
 	static assert(is(Z!List == Z!(Empty, bool, float, Empty, ulong, double)));
 }
 
+public:
+
 /// Mix it in inside a `struct` definition to make the `struct` non-copyable.
 mixin template NonCopyable() {
 	@disable this(this);
