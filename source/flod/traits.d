@@ -137,7 +137,7 @@ private template PullElementType(S, Args...) {
 		alias ElementType = typeof({
 				S s;
 				import std.traits : ParameterTypeTuple;
-				alias B = ParameterTypeTuple!Func[0];
+				alias B = ParameterTypeTuple!Func[$ - 1];
 				alias T = typeof({ B b; return b[0].init; }());
 				T[] buf;
 				size_t n = s.pull(buf);
@@ -145,7 +145,7 @@ private template PullElementType(S, Args...) {
 			}());
 	}
 	static if (is(typeof(Args[0]) == typeof(null))) {
-		alias PullElementType = ElementType!(typeof({ S s; return &s.pull; }()));
+		alias PullElementType = ElementType!(typeof({ S s; return &s.pull; }));
 	} else {
 		alias PullElementType = ElementType!(typeof({ S s; return &s.pull!Args; }()));
 	}
@@ -161,11 +161,11 @@ template isPullable(S) {
 
 ///
 template FixedPullType(S) {
-	static if (!is(PushElementType!(S, SomePOD!"FixedPushType"))) {
-		static if (is(PushElementType!(S) T))
-			alias FixedPushType = T;
-		else static if (is(PushElementType!(S, null) U))
-			alias FixedPushType = U;
+	static if (!is(PullElementType!(S, SomePOD!"FixedPullType"))) {
+		static if (is(PullElementType!(S) T))
+			alias FixedPullType = T;
+		else static if (is(PullElementType!(S, null) U))
+			alias FixedPullType = U;
 	}
 }
 
@@ -191,6 +191,21 @@ template isAllocable(S) {
 		   is(AllocElementType!(S, false))
 		|| is(AllocElementType!(S, true))
 		|| is(AllocElementType!(S, true, SomePOD!"isAllocable"));
+}
+
+///
+template DefaultAllocType(S) {
+	import std.traits : Unqual;
+	static if (is(AllocElementType!(S, false) T))
+		alias DefaultAllocType = Unqual!T;
+	else static if (is(AllocElementType!(S, true) U))
+		alias DefaultAllocType = Unqual!U;
+}
+
+///
+template FixedAllocType(S) {
+	static if (!is(AllocElementType!(S, true, SomePOD!())))
+		alias FixedAllocType = DefaultAllocType;
 }
 
 private template PeekElementType(S, bool templateConsume, PeekArgs...) {
@@ -584,12 +599,14 @@ unittest {
 /// Returns `true` if `S` is a sink which reads data by calling `peek()` and `consume()`.
 template isPeekSink(S...) {
 	private template isPeekSinkTempl(alias Z) {
+		import std.range : isInputRange;
 		enum isPeekSinkTempl =
-			   onlyValidFor!(isRunnable, Z, DummyPeekSource)
-			|| onlyValidFor!(isPullable, Z, DummyPeekSource)
-			|| onlyValidFor!(isPeekable, Z, DummyPeekSource)
-			|| onlyValidFor!(isRunnable, Z, DummyPeekSource, DummyPushSink)
-			|| onlyValidFor!(isRunnable, Z, DummyPeekSource, DummyAllocSink);
+			   onlyValidFor!(isInputRange, Z, DummyPeekSource)
+			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource)
+			|| onlyValidFor!(isPullable,   Z, DummyPeekSource)
+			|| onlyValidFor!(isPeekable,   Z, DummyPeekSource)
+			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource, DummyPushSink)
+			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource, DummyAllocSink);
 	}
 	enum bool isPeekSink = testStage!(null, isPeekSinkTempl, S);
 }
@@ -664,4 +681,46 @@ template isSinkOnly(S...) {
 /// Returns `true` if `S` is a source or a sink.
 template isStage(S...) {
 	enum isStage = isSource!S || isSink!S;
+}
+
+/**
+Aliases to the element type can be accepted by both `Source` and `Sink` stages.
+If both can work on any types and do not specify defaults, `CommonType` aliases to `DefaultType`.
+*/
+template CommonType(alias Source, alias Sink, DefaultType = ubyte)
+	if (isPassiveSource!Source || isPassiveSink!Sink)
+{
+	static if (is(FixedPullType!Source F)) {
+		alias FixedSourceType = F;
+	} else static if (is(FixedPeekType!Source G)) {
+		alias FixedSourceType = G;
+	}
+	static if (is(FixedPushType!Source F)) {
+		alias FixedSinkType = F;
+	} else static if (is(FixedAllocType!Source G)) {
+		alias FixedSinkType = G;
+	}
+	static if (is(DefaultPeekType!Source F))
+		alias DefaultSourceType = F;
+	static if (is(DefaultPeekType!Sink F))
+		alias DefaultSinkType = F;
+
+	static if (is(FixedSourceType)) {
+		static if (!is(FixedSinkType))
+			alias CommonType = FixedSourceType;
+		else static if (is(FixedSourceType : FixedSinkType))
+			alias CommonType = FixedSourceType;
+		else
+			static assert(false, "No common type for " ~ str!Source ~ " (" ~ str!FixedSourceType
+				~ ") and " ~ str!Sink ~ " (" ~ str!FixedSinkType ~ ")");
+	} else {
+		static if (is(FixedSinkType))
+			alias CommonType = FixedSinkType;
+		else static if (is(DefaultSourceType))
+			alias CommonType = DefaultSourceType;
+		else static if (is(DefaultSinkType))
+			alias CommonType = DefaultSinkType;
+		else
+			alias CommonType = DefaultType;
+	}
 }

@@ -31,11 +31,13 @@ unittest {
 
 ///
 template str(W...) {
-	static if (W.length > 1) {
+	static if (W.length == 0) {
+		enum str = "()";
+	} else static if (W.length > 1) {
 		enum str = str!(W[0]) ~ "," ~ str!(W[1 .. $]);
 	} else {
 		alias V = W[0];
-		static if (__traits(compiles, V.str))
+		static if (is(typeof(V.str) : string))
 			enum str = V.str;
 		else static if (__traits(compiles, __traits(identifier, V)))
 			enum str = __traits(identifier, V);
@@ -89,11 +91,11 @@ unittest {
 auto moveIfNonCopyable(T)(auto ref T t)
 {
 	static if (isCopyable!T) {
-		debug pragma(msg, "copying ", __traits(identifier, T), " (size=", t.sizeof, ")");
+		debug pragma(msg, "copying ", str!T, " (size=", t.sizeof, ")");
 		return t;
 	} else {
 		import std.algorithm : move;
-		debug pragma(msg, "moving ", __traits(identifier, T), " (size=", t.sizeof, ")");
+		debug pragma(msg, "moving ", str!T, " (size=", t.sizeof, ")");
 		return move(t);
 	}
 }

@@ -16,14 +16,14 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 	KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
 	if (isImmediatePipeline!Pipeline && isScalarType!Terminator)
 {
-	static struct ByLine {
-		Pipeline pipeline;
+	static struct ByLine(Source) {
+		Source source;
 		Terminator term;
 		bool keep;
 
-		this()(auto ref Pipeline pipeline, Terminator term, bool keep)
+		this()(auto ref Source source, Terminator term, bool keep)
 		{
-			this.pipeline = moveIfNonCopyable(pipeline);
+			this.source = moveIfNonCopyable(source);
 			this.term = term;
 			this.keep = keep;
 			next();
@@ -33,8 +33,8 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 		private void next()
 		{
 			size_t i = 0;
-			alias DT = typeof(pipeline.peek(1)[0]);
-			const(DT)[] buf = pipeline.peek(256);
+			alias DT = typeof(source.peek!Char(1)[0]);
+			const(DT)[] buf = source.peek!Char(256);
 			if (buf.length == 0) {
 				line = null;
 				return;
@@ -42,7 +42,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 			while (buf[i] != term) {
 				i++;
 				if (i >= buf.length) {
-					buf = pipeline.peek(buf.length * 2);
+					buf = source.peek!Char(buf.length * 2);
 					if (buf.length == i) {
 						line = buf[];
 						return;
@@ -59,7 +59,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 
 		void popFront()
 		{
-			pipeline.consume(line.length);
+			source.consume(line.length);
 			next();
 		}
 
@@ -75,7 +75,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 		int opApply(scope int delegate(const(Char[]) ln) dg)
 		{
 			for (;;) {
-				auto buf = pipeline.peek!Char(2);
+				auto buf = source.peek!Char(2);
 				size_t start = 0;
 				size_t i = 0;
 				if (buf.length == 0)
@@ -87,7 +87,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 							assert(i == buf.length);
 							if (start > 0)
 								goto cont;
-							buf = pipeline.peek(i * 2);
+							buf = source.peek!Char(i * 2);
 							if (buf.length == i)
 								return dg(buf[0 .. i]);
 						}
@@ -97,12 +97,12 @@ auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline
 					start = ++i;
 				}
 			cont:
-				pipeline.consume!Char(start);
+				source.consume!Char(start);
 			}
 			return 0;
 		}
 	}
-	auto r = ByLine(moveIfNonCopyable(pipeline), terminator, keepTerminator == KeepTerminator.yes);
+	auto r = pipeline.pipe!ByLine(terminator, keepTerminator == KeepTerminator.yes);
 
 	return r;
 }
@@ -111,16 +111,16 @@ unittest
 {
 	import std.range : take, array;
 	auto testArray = "first line\nsecond line\nline without terminator";
-	assert(pipe(testArray).byLine(KeepTerminator.yes, 'e').array == [
+	assert(testArray.byLine(KeepTerminator.yes, 'e').array == [
 		"first line", "\nse", "cond line", "\nline", " without te", "rminator" ]);
-	assert(pipe(testArray).byLine(KeepTerminator.no, 'e').array == [
+	assert(testArray.byLine(KeepTerminator.no, 'e').array == [
 		"first lin", "\ns", "cond lin", "\nlin", " without t", "rminator" ]);
-	assert(pipe(testArray).byLine!(char, char)(KeepTerminator.yes).array == [
+	assert(testArray.byLine!(char, char)(KeepTerminator.yes).array == [
 		"first line\n", "second line\n", "line without terminator" ]);
-	assert(pipe(testArray).byLine!(char, char).array == [
+	assert(testArray.byLine!(char, char).array == [
 		"first line", "second line", "line without terminator" ]);
-	assert(pipe(testArray).byLine(KeepTerminator.yes, 'z').array == [
+	assert(testArray.byLine(KeepTerminator.yes, 'z').array == [
 		"first line\nsecond line\nline without terminator" ]);
-	foreach (c; pipe(testArray).byLine(KeepTerminator.yes, '\n'))
+	foreach (c; testArray.byLine(KeepTerminator.yes, '\n'))
 		c.writeln();
 }

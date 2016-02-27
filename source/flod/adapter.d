@@ -6,6 +6,7 @@
  */
 module flod.adapter;
 
+import flod.pipeline: isPullPipeline, isPeekPipeline;
 import flod.traits;
 
 struct DefaultPullPeekAdapter(Source) {
@@ -80,8 +81,10 @@ static assert(isPeekSource!DefaultPullPeekAdapter);
 static assert(isPullSink!DefaultPullPeekAdapter);
 
 struct DefaultPeekPullAdapter(Source) {
+private:
 	Source source;
 
+public:
 	size_t pull(T)(T[] buf)
 	{
 		import std.algorithm : min;
@@ -103,25 +106,80 @@ static assert(isPullSource!DefaultPeekPullAdapter);
 static assert(isPeekSink!DefaultPeekPullAdapter);
 
 
-version(FlodBloat):
-
-// Convert buffered push source to unbuffered push source
-struct BufferedToUnbufferedPushSource(Sink) {
+struct DefaultPullPushAdapter(Source, Sink) {
+	pragma(msg, "instantiating with ", str!Source, ",", str!Sink);
+//private:
+	alias T = CommonType!(Source, Sink, ubyte);
+	Source source;
 	Sink sink;
+	size_t chunkSize;
 
-	void open()
+public:
+	int step()()
 	{
-		sink.open();
-	}
-
-	size_t push(const(ubyte)[] b)
-	{
-		auto buf = sink.alloc(b.length);
-		buf[] = b[0 .. buf.length];
-		sink.commit(buf.length);
-		return buf.length;
+		import core.stdc.stdlib : alloca;
+		auto buf = (cast(T*) alloca(T.sizeof * chunkSize))[0 .. chunkSize];
+		size_t inp = source.pull(buf[]);
+		if (inp == 0)
+			return 1;
+		return sink.push(buf[0 .. inp]) < chunkSize;
 	}
 }
+static assert(isPullSink!DefaultPullPushAdapter);
+static assert(isPushSource!DefaultPullPushAdapter);
+
+///
+auto pullPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
+	if (isPullPipeline!Pipeline)
+{
+	import flod.pipeline : pipe, isDeferredPipeline;
+	auto result = pipeline.pipe!DefaultPullPushAdapter(chunkSize);
+	static assert(isDeferredPipeline!(typeof(result)));
+	return result;
+}
+
+struct DefaultPeekPushAdapter(Source, Sink) {
+private:
+	alias T = CommonType!(Source, Sink, ubyte);
+	Source source;
+	Sink sink;
+	size_t chunkSize;
+
+public:
+	int step()()
+	{
+		auto buf = source.peek!T(chunkSize);
+		if (buf.length == 0)
+			return 1;
+		size_t w = sink.push(buf[]);
+		source.consume(w);
+		return w < chunkSize;
+	}
+}
+static assert(isPeekSink!DefaultPeekPushAdapter);
+static assert(isPushSource!DefaultPeekPushAdapter);
+
+///
+auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = size_t.sizeof)
+	if (isPeekPipeline!Pipeline)
+{
+	import flod.pipeline : pipe, isDeferredPipeline;
+	auto result = pipeline.pipe!DefaultPeekPushAdapter(chunkSize);
+	pragma(msg, typeof(result).stringof, " ", str!(typeof(result)));
+	static assert(isDeferredPipeline!(typeof(result)));
+	return result;
+}
+
+unittest {
+	import std.array : appender;
+	import std.range : iota, array;
+	import flod.pipeline : toOutputRange, run;
+	auto app = appender!(uint[]);
+	iota(0, 1048576).array().peekPush().toOutputRange(app).run();
+	assert(app.data == iota(0, 1048576).array());
+}
+
+version(FlodBloat):
 
 class PushPull(Sink)
 {
@@ -197,49 +255,6 @@ class PushPull(Sink)
 		auto l = min(inbuf.length, outbuf.length);
 		outbuf[0 .. l] = inbuf[0 .. l];
 		consume(l);
-	}
-}
-
-// Drive a stream which doesn't have any driving components
-struct PullPush(Source, Sink) {
-	Source source = void;
-	Sink sink = void;
-
-	bool step()()
-	{
-		ubyte[4096] buf;
-		size_t n = source.pull(buf[]);
-		if (n == 0)
-			return false;
-		if (sink.push(buf[0 .. n]) < n)
-			return false;
-		return true;
-	}
-}
-
-struct PushBuffer(Sink, T)
-{
-	pragma(msg, "PushBuffer: ", typeof(Sink.init).stringof, ", ", T.stringof);
-	Sink sink;
-
-	T[] buf;
-	size_t allocOffset;
-
-	T[] alloc(size_t size)
-	{
-		if (allocOffset + size > buf.length) {
-			buf.length = allocOffset + size;
-			writefln("PushBuffer grow %d", buf.length);
-		}
-		return buf[allocOffset .. $];
-	}
-
-	void commit(size_t size)
-	{
-		sink.push(buf[allocOffset .. size]);
-		allocOffset += size;
-		if (allocOffset == buf.length)
-			allocOffset = 0;
 	}
 }
 
@@ -341,15 +356,4 @@ struct CircularPullBuffer(Source)
 		}
 		writefln("%08x %08x", peekOffset, readOffset);
 	}
-}
-
-auto compactPullBuffer(Source, T = SourceDataType!Source)(Source source)
-{
-	return CompactPullBuffer!(Source, T)(source);
-}
-
-// TODO: detect type of sink and itsSink
-auto pushToPullBuffer(Sink, ItsSink)(Sink sink, ItsSink itsSink)
-{
-	return new PushToPullBuffer!(Sink, ItsSink)(sink, itsSink);
 }

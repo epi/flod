@@ -6,12 +6,15 @@
  */
 module flod.pipeline;
 
+import std.range : isInputRange, isOutputRange;
+
 import flod.meta : isType, NonCopyable, moveIfNonCopyable, str;
 import flod.traits;
 
 ///
 template isPeekPipeline(P) {
-	enum isPeekPipeline = isPeekable!P;
+	import std.traits : isDynamicArray;
+	enum isPeekPipeline = isPeekable!P || isDynamicArray!P;
 }
 
 ///
@@ -91,6 +94,70 @@ struct WrapPeekSource(Source, DefaultType = ubyte) {
 
 auto wrapPeekSource(S)(auto ref S s) {
 	return WrapPeekSource!S(moveIfNonCopyable(s));
+}
+
+private auto wrapArray(T)(const(T)[] array)
+{
+	static struct ArraySource {
+		private const(T)[] array;
+
+		auto peek(U = T)(size_t n) { return array; }
+		void consume(U = T)(size_t n) { array = array[n .. $]; }
+	}
+	return ArraySource(array);
+}
+
+private auto wrapInputRange(Range)(Range range)
+	if (isInputRange!Range)
+{
+	static struct InputRangeSource {
+		private Range range;
+		import std.range : ElementType;
+		alias T = ElementType!Range;
+
+		size_t pull(T[] buf)
+		{
+			foreach (i, ref el; buf) {
+				if (range.empty)
+					return i;
+				el = range.front;
+				range.popFront();
+			}
+			return buf.length;
+		}
+	}
+	return InputRangeSource(range);
+}
+
+unittest {
+	import std.range : iota, array;
+	auto r = iota(0, 10);
+	int[10] buf;
+	r.wrapInputRange.pull(buf[]);
+	assert(buf[] == iota(0, 10).array());
+}
+
+/// Use any output range as a pushable source.
+auto toOutputRange(Pipeline, Range)(auto ref Pipeline pipeline, ref Range range)
+	if (isPipeline!Pipeline)
+{
+	static struct OutputRange {
+	private:
+		Range* range;
+	public:
+		size_t push(T)(const(T)[] buf)
+		{
+			import std.range : put;
+			static if (is(typeof({ put(range, buf); }))) {
+				put(range, buf);
+				return buf.length;
+			} else {
+				// hack :/
+				return 0;
+			}
+		}
+	}
+	return pipeline.pipe!OutputRange(&range);
 }
 
 version(unittest) {
@@ -265,7 +332,8 @@ Filters:
 			void consume(T = DT)(size_t n) { s.consume!T(n); }
 		}
 	}
-	static assert(isPeekSink!TestPeekFilter && isPeekSource!TestPeekFilter);
+	static assert(isPeekSink!TestPeekFilter);
+	static assert(isPeekSource!TestPeekFilter);
 
 	struct TestPeekPullFilter(Source) {
 		Source source;
@@ -278,6 +346,32 @@ Filters:
 		}
 	}
 	static assert(isPeekSink!TestPeekPullFilter && isPullSource!TestPeekPullFilter);
+
+	struct TestPeekPushFilter(Source, Sink) {
+		mixin NonCopyable;
+		Source source;
+		Sink sink;
+
+		int step()
+		{
+			auto nb = source.peek(4096);
+			if (nb.length == 0)
+				return 1;
+			auto w = sink.push(nb);
+			source.consume(w);
+			return w < nb.length;
+		}
+	}
+	static assert(isPeekSink!TestPeekPushFilter);
+	static assert(isPushSource!TestPeekPushFilter);
+
+	struct TestPushFilter(Sink) {
+		Sink sink;
+		size_t push(T)(const(T)[] buf) { return sink.push(buf); }
+	}
+	static assert(isPushSink!TestPushFilter);
+	static assert(isPushSource!TestPushFilter);
+
 }
 
 // this is only used to check if all possible tuples (pipeline, stage sink, stage source) are tested
@@ -356,6 +450,12 @@ Stage = source to be added as first _stage of the new pipeline.
 args  = arguments passed to Stage constructor.
 */
 auto pipe(alias Stage, Args...)(auto ref Args args)
+	if (!isSink!Stage && isSource!Stage)
+{
+	return startPipe!Stage(args);
+}
+
+private auto startPipe(alias Stage, Args...)(auto ref Args args)
 	if (!isSink!Stage && isPassiveSource!Stage)
 {
 	alias X = whatIsAppended!(void, Stage);
@@ -367,12 +467,11 @@ unittest {
 	auto p2 = pipe!TestPullSource;
 }
 
-/// ditto
-auto pipe(alias Stage, Args...)(auto ref Args args)
+private auto startPipe(alias Stage, Args...)(auto ref Args args)
 	if (!isSink!Stage && isActiveSource!Stage)
 {
 	alias X = whatIsAppended!(void, Stage);
-	static struct DeferredCtor {
+	static struct SourceDeferredCtor {
 		mixin NonCopyable;
 		Args args;
 
@@ -381,7 +480,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 			return Stage!Sink(moveIfNonCopyable(sink), args);
 		}
 	}
-	return DeferredCtor(args);
+	return SourceDeferredCtor(args);
 }
 
 unittest {
@@ -403,13 +502,29 @@ Params:
 Returns: `Stage!Pipeline(pipeline, args)`.
 `pipeline` is moved if non-copyable.
 */
-auto pipe(alias Stage, Pipeline, string file = __FILE__, int line = __LINE__, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+	if (isPipeline!Pipeline && isSink!Stage)
+{
+	import std.traits : isDynamicArray;
+	import std.range : isInputRange;
+
+	static if (isDynamicArray!Pipeline) {
+		return wrapArray(pipeline).appendPipe!Stage(args);
+	} else static if (isInputRange!Pipeline) {
+		return wrapInputRange(pipeline).appendPipe!Stage(args);
+	} else {
+		return pipeline.appendPipe!Stage(args);
+	}
+}
+
+
+auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 	if (isImmediatePipeline!Pipeline && isActiveSink!Stage && !isActiveSource!Stage)
 out(result)
 {
 	import std.traits : Unqual;
 	alias P = Unqual!(typeof(result));
-	static assert(isImmediatePipeline!P || isRunnable!P);
+	static assert(isImmediatePipeline!P || isRunnable!P || isInputRange!P);
 }
 body
 {
@@ -420,12 +535,12 @@ body
 		return Stage!Pipeline(moveIfNonCopyable(pipeline), args);
 	} else static if (isPeekable!Pipeline && isPullSink!Stage) {
 		import flod.adapter : DefaultPeekPullAdapter;
-		debug pragma(msg, file, ":", line, ": Inserting implicit peek-pull adapter");
-		return pipeline.pipe!DefaultPeekPullAdapter.pipe!Stage(args);
+		debug pragma(msg, "Inserting implicit peek-pull adapter");
+		return pipeline.appendPipe!DefaultPeekPullAdapter.appendPipe!Stage(args);
 	} else static if (isPullable!Pipeline && isPeekSink!Stage) {
 		import flod.adapter : DefaultPullPeekAdapter;
-		debug pragma(msg, file, ":", line, ": Inserting implicit pull-peek adapter");
-		return pipeline.pipe!DefaultPullPeekAdapter.pipe!Stage(args);
+		debug pragma(msg, "Inserting implicit pull-peek adapter");
+		return pipeline.appendPipe!DefaultPullPeekAdapter.appendPipe!Stage(args);
 	} else {
 		// TODO: give a better diagnostic message
 		static assert(0, "Cannot instantiate " ~ str!Stage ~ "!" ~ str!Pipeline);
@@ -490,48 +605,43 @@ unittest {
 		.pipe!TestPullSink().run() == 0);
 }
 
-/// ditto
-auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 	if (isImmediatePipeline!Pipeline && isActiveSink!Stage && isActiveSource!Stage)
 {
 	debug alias X = whatIsAppended!(Pipeline, Stage);
-	static struct DeferredCtor {
+	static struct ImmediateDeferredCtor {
 		mixin NonCopyable;
 		Pipeline pipeline;
 		Args args;
 
 		auto create(Sink)(auto ref Sink sink)
 		{
-			//import std.algorithm : move;
 			return Stage!(Pipeline, Sink)(moveIfNonCopyable(pipeline), moveIfNonCopyable(sink), args);
 		}
-
 	}
 	static if (isPullPipeline!Pipeline && isPullSink!Stage) {
-		return DeferredCtor(moveIfNonCopyable(pipeline), args);
+		return ImmediateDeferredCtor(moveIfNonCopyable(pipeline), args);
 	} else static if (isPeekPipeline!Pipeline && isPeekSink!Stage) {
-		return DeferredCtor(moveIfNonCopyable(pipeline), args);
+		return ImmediateDeferredCtor(moveIfNonCopyable(pipeline), args);
 	} else static if (isPullPipeline!Pipeline && isPeekSink!Stage) {
 		import flod.adapter : DefaultPullPeekAdapter;
 		debug pragma(msg, "Inserting implicit pull-peek adapter");
-		return pipeline.pipe!DefaultPullPeekAdapter.pipe!Stage(args);
+		return pipeline.appendPipe!DefaultPullPeekAdapter.appendPipe!Stage(args);
 	} else static if (isPeekPipeline!Pipeline && isPullSink!Stage) {
 		import flod.adapter : DefaultPeekPullAdapter;
 		debug pragma(msg, "Inserting implicit peek-pull adapter");
-		return pipeline.pipe!DefaultPeekPullAdapter.pipe!Stage(args);
+		return pipeline.appendPipe!DefaultPeekPullAdapter.appendPipe!Stage(args);
 	}
 }
 
-/// ditto
-auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 	if (isDeferredPipeline!Pipeline && isPassiveSink!Stage && !isActiveSource!Stage)
 {
 	debug alias X = whatIsAppended!(Pipeline, Stage);
 	return pipeline.create(Stage(args));
 }
 
-/// ditto
-auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 	if (isDeferredPipeline!Pipeline && isPassiveSink!Stage && isActiveSource!Stage)
 {
 	debug alias X = whatIsAppended!(Pipeline, Stage);
@@ -565,14 +675,34 @@ unittest {
 	p.run();
 }
 
-///
-auto pipe(T)(const(T)[] array)
+// pull -> push
+// peek -> push
+private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+	if (isImmediatePipeline!Pipeline && isPassiveSink!Stage)
 {
-	static struct ArraySource {
-		mixin NonCopyable;
-		const(T)[] array;
-		auto peek(U = T)(size_t n) { return array; }
-		void consume(U = T)(size_t n) { array = array[n .. $]; }
+	debug alias X = whatIsAppended!(Pipeline, Stage);
+	static if (isPullPipeline!Pipeline && isPushSink!Stage) {
+		debug pragma(msg, "Inserting implicit pull-push adapter");
+		import flod.adapter : pullPush;
+		return pipeline.pullPush.appendPipe!Stage(args);
+	} else static if (isPeekPipeline!Pipeline && isPushSink!Stage) {
+		debug pragma(msg, "Inserting implicit peek-push adapter");
+		import flod.adapter : peekPush;
+		return pipeline.peekPush.appendPipe!Stage(args);
+	} else {
+		static assert(0, "not implemented");
 	}
-	return pipe!ArraySource(array);
+}
+
+unittest {
+	// pull - push
+	pipe!TestPullSource.pipe!TestPushSink.run();
+	pipe!TestPullSource.pipe!TestPushFilter.pipe!TestPushSink.run();
+	pipe!TestPullSource.pipe!TestPeekPushFilter.pipe!TestPushSink.run();
+}
+
+unittest {
+	// peek - push
+	cast(void) pipe!TestPeekSource.pipe!TestPushSink.run();
+	cast(void) pipe!TestPeekSource.pipe!TestPushFilter.pipe!TestPushSink.run();
 }

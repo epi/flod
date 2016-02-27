@@ -55,140 +55,39 @@ struct MmappedFile {
 }
 static assert(isPeekSource!MmappedFile);
 
-version(FlodBloat):
+import std.stdio : File;
 
-struct Xor(Source) {
-	Source source;
-
-	uint val;
-
-	this(uint val)
-	{
-		this.val = val;
-	}
-
-	size_t pull(ubyte[] buf) pure nothrow
-	{
-		ubyte val = cast(ubyte) this.val;
-		auto ib = source.peek(buf.length);
-		foreach (i, b; ib)
-			buf[i] = b ^ val;
-		source.consume(ib.length);
-		return ib.length;
-	}
-}
-
-struct FileReader {
-	import std.stdio : File;
-	File file;
-
-	this(File file)
-	{
-		this.file = file;
-	}
-
-	this(in char[] name)
-	{
-		this.file.__ctor(name, "rb");
-	}
-
-	size_t pull(ubyte[] buf)
-	{
-		return file.rawRead(buf).length;
-	}
-}
-static assert(isPullSource!FileReader);
-
-struct FileWriter {
-	import std.stdio : File;
-	File file;
-
-	this(File file)
-	{
-		this.file = file;
-	}
-
-	this(in char[] name)
-	{
-		this.file.__ctor(name, "wb");
-	}
-
-	size_t push(const(ubyte)[] buf)
-	{
-		file.rawWrite(buf);
-		return buf.length;
-	}
-}
-static assert(isPushSink!FileWriter);
-
-struct ByLine(Source) {
-	Source source;
-
-	const(char)[] line;
-
-	void init()
-	{
-		next();
-	}
-
-	void next()
-	{
-		line = cast(const(char)[]) source.peek(4096);
-		if (line.length == 0) {
-			line = null;
-			return;
-		}
-		foreach (i, c; line)
+auto fromFile(File file)
+{
+	static struct FileReader {
+		File file;
+		size_t pull(T)(T[] buf)
 		{
-			if (c == '\n') {
-				line = line[0 .. i + 1];
-				return;
-			}
+			return file.rawRead(buf).length;
 		}
 	}
+	static assert (isPullSource!FileReader);
+	return pipe!FileReader(file);
+}
 
-	bool empty()
-	{
-		return line == null;
+auto toFile(Pipeline)(auto ref Pipeline pipeline, File file)
+	if (isPipeline!Pipeline)
+{
+	static struct FileWriter {
+		File file;
+		size_t push(T)(const(T)[] buf)
+		{
+			file.rawWrite(buf);
+			return buf.length;
+		}
 	}
-
-	void popFront()
-	{
-		source.consume(line.length);
-		next();
-	}
-
-	auto front()
-	{
-		return line;
-	}
+	static assert (isPushSink!FileWriter);
+	return pipeline.pipe!FileWriter(file);
 }
 
 unittest
 {
-	import flod.common : take, drop, NullSource;
-	import flod.adapter : PullPush;
-	auto s = pipe!FileReader("/etc/passwd").drop(3).pipe!PullPush.take(3).pipe!FileWriter("ep.out");
-	s.run();
-	pipe!NullSource.pipe!PullPush.pipe!FileWriter("empty_file").run();
-}
-
-void test_fw()
-{
-	//import std.algorithm : swap;
-	auto file = MmappedFile("/etc/passwd");
-	//auto xor = Xor!(MmappedFile)(0);
-	//xor.source = &file;
-	//swap(xor.source, file);
-	//auto fw = FileWriter!(typeof(xor))("test.out");
-	//swap(fw.source, xor);
-	//fw.source = &xor;
-	//fw.pull();
-	ByLine!(MmappedFile*) bl;
-	bl.source = &file;
-	bl.init;
-	import std.stdio;
-	foreach (line; bl) {
-		write(line);
-	}
+	import flod.adapter : pullPush;
+	auto s = fromFile(File("/etc/passwd"))
+		.pullPush(65536).toFile(File("dupa", "wb")).run();
 }
