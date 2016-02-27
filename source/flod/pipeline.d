@@ -66,6 +66,11 @@ template isDeferredPipeline(P) {
 	enum isDeferredPipeline = isAllocPipeline!P || isPushPipeline!P;
 }
 
+///
+template isPipeline(P) {
+	enum isPipeline = isImmediatePipeline!P || isDeferredPipeline!P;
+}
+
 // not used yet, not tested
 // probably wrappers will be used for all stages, e.g. to implement some optional methods
 // as just forwarding the calls to the next/previous stage
@@ -558,4 +563,16 @@ unittest {
 	auto p = pipe!TestPeekSource.pipe!TestPullPushFilter.pipe!TestPushSink;
 	static assert(isRunnable!(typeof(p)));
 	p.run();
+}
+
+///
+auto pipe(T)(const(T)[] array)
+{
+	static struct ArraySource {
+		mixin NonCopyable;
+		const(T)[] array;
+		auto peek(U = T)(size_t n) { return array; }
+		void consume(U = T)(size_t n) { array = array[n .. $]; }
+	}
+	return pipe!ArraySource(array);
 }

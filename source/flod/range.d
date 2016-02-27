@@ -1,38 +1,40 @@
-/** Stream iteration functions.
+/** Convert pipelines to ranges (of chunks, text lines, etc.).
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
  */
 module flod.range;
-
-version(FlodBloat):
 
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 import std.traits : isScalarType;
 
-import flod.pipeline : isPipeline;
+import flod.pipeline : pipe, isImmediatePipeline;
+import flod.meta : moveIfNonCopyable, NonCopyable;
 
-auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
-	if (isPipeline!Pipeline && isScalarType!Terminator)
+auto byLine(Terminator = char, Char = char, Pipeline)(auto ref Pipeline pipeline,
+	KeepTerminator keepTerminator = KeepTerminator.no, Terminator terminator = '\x0a')
+	if (isImmediatePipeline!Pipeline && isScalarType!Terminator)
 {
-	import flod.stream : RefCountedStream, refCountedStream, stream;
-
 	static struct ByLine {
-		RefCountedStream!Pipeline stream;
 		Pipeline pipeline;
 		Terminator term;
 		bool keep;
 
-		this(Pipeline pipeline, Terminator term, bool keep)
+		this()(auto ref Pipeline pipeline, Terminator term, bool keep)
 		{
-			this.pipeline = pipeline;
+			this.pipeline = moveIfNonCopyable(pipeline);
 			this.term = term;
 			this.keep = keep;
+			next();
 		}
-		const(Char)[] line;
 
+		const(Char)[] line;
 		private void next()
 		{
 			size_t i = 0;
-			alias DT = typeof(stream.peek(1)[0]);
-			const(DT)[] buf = stream.peek(256);
+			alias DT = typeof(pipeline.peek(1)[0]);
+			const(DT)[] buf = pipeline.peek(256);
 			if (buf.length == 0) {
 				line = null;
 				return;
@@ -40,7 +42,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 			while (buf[i] != term) {
 				i++;
 				if (i >= buf.length) {
-					buf = stream.peek(buf.length * 2);
+					buf = pipeline.peek(buf.length * 2);
 					if (buf.length == i) {
 						line = buf[];
 						return;
@@ -52,28 +54,17 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 
 		@property bool empty()
 		{
-			if (line !is null)
-				return false;
-			if (stream.isNull) {
-				stream = refCountedStream(pipeline);
-				next();
-				return false;
-			}
-			else {
-				return true;
-			}
+			return line is null;
 		}
 
 		void popFront()
 		{
-			assert(!stream.isNull);
-			stream.consume(line.length);
+			pipeline.consume(line.length);
 			next();
 		}
 
 		@property const(Char)[] front()
 		{
-			assert(!stream.isNull);
 			if (keep)
 				return line;
 			if (line.length > 0 && line[$ - 1] == term)
@@ -83,9 +74,8 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 
 		int opApply(scope int delegate(const(Char[]) ln) dg)
 		{
-			auto stream = pipeline.stream();
 			for (;;) {
-				auto buf = stream.peek!Char(2);
+				auto buf = pipeline.peek!Char(2);
 				size_t start = 0;
 				size_t i = 0;
 				if (buf.length == 0)
@@ -97,7 +87,7 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 							assert(i == buf.length);
 							if (start > 0)
 								goto cont;
-							buf = stream.peek(i * 2);
+							buf = pipeline.peek(i * 2);
 							if (buf.length == i)
 								return dg(buf[0 .. i]);
 						}
@@ -107,19 +97,18 @@ auto byLine(Terminator = char, Char = char, Pipeline)(Pipeline pipeline, KeepTer
 					start = ++i;
 				}
 			cont:
-				stream.consume!Char(start);
+				pipeline.consume!Char(start);
 			}
 			return 0;
 		}
 	}
+	auto r = ByLine(moveIfNonCopyable(pipeline), terminator, keepTerminator == KeepTerminator.yes);
 
-	auto r = ByLine(pipeline, terminator, keepTerminator == KeepTerminator.yes);
 	return r;
 }
 
 unittest
 {
-	import flod.pipeline : pipe;
 	import std.range : take, array;
 	auto testArray = "first line\nsecond line\nline without terminator";
 	assert(pipe(testArray).byLine(KeepTerminator.yes, 'e').array == [
