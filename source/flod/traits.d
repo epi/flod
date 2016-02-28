@@ -724,3 +724,17 @@ template CommonType(alias Source, alias Sink, DefaultType = ubyte)
 			alias CommonType = DefaultType;
 	}
 }
+
+template check(string sinkMethod, string sourceMethod, S...)
+	if (S.length == 1)
+{
+	static if (sinkMethod == "peek" && sourceMethod == "push") {
+		alias __S = S[0];
+		alias __check = __S!(DummyPeekSource, DummyPushSink);
+		static assert(isRunnable!__check);
+		enum check = true;
+	}
+	else {
+		static assert(0, "not implemented");
+	}
+}
