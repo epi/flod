@@ -6,89 +6,85 @@
  */
 module flod.adapter;
 
-import flod.pipeline: isPullPipeline, isPeekPipeline;
+import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
 import flod.traits;
 
-size_t alignUp(size_t n, size_t al)
+template PullElementType(Source, Default) {
+	static if (is(FixedPullType!Source F))
+		alias PullElementType = F;
+	else
+		alias PullElementType = Default;
+}
+
+template isPullable(Source, ElementType) {
+	static if (is(FixedPullType!Source F))
+		enum isPullable = is(ElementType == F);
+	else
+		enum isPullable = true;
+}
+
+private template DefaultPullPeekAdapter(Buffer)
 {
-	return (n + al - 1) & ~(al - 1);
-}
-static assert(13.alignUp(4) == 16);
-static assert(31337.alignUp(4096) == 32768);
+	struct DefaultPullPeekAdapter(Source) {
+	private:
+		import std.stdio;
 
-struct DefaultPullPeekAdapter(Source) {
-	import std.experimental.allocator : IAllocator, processAllocator, expandArray, makeArray;
-	import std.stdio;
-	import flod.traits : FixedPullType;
-	import flod.meta : moveIfNonCopyable;
-
-	private {
 		Source source;
-		IAllocator allocator;
+		Buffer buffer;
 
-		void[] buf;
-		size_t readOffset;
-		size_t peekOffset;
-	}
+		alias ElementType = PullElementType!(Source, ubyte);
 
-	this()(auto ref Source source, IAllocator allocator = processAllocator) {
-		this.source = moveIfNonCopyable(source);
-		this.allocator = allocator;
-	}
-
-	static if (is(FixedPullType!Source)) {
-		alias PullType = DefaultPullType!Source;
-		const(T)[] peek(T = PullType)(size_t size)
-			if (is(T == PullType))
+	package:
+		this()(auto ref Source source, auto ref Buffer buffer)
 		{
-			return doPeek!PullType(size);
+			import flod.meta : moveIfNonCopyable;
+			this.source = moveIfNonCopyable(source);
+			this.buffer = moveIfNonCopyable(buffer);
 		}
-		void consume(T = PullType)(size_t size)
-			if (is(T == PullType))
+
+	public:
+		const(T)[] peek(T = ElementType)(size_t size)
+			if (isPullable!(Source, T))
 		{
-			doConsume!PullType(size);
+			auto ready = buffer.peek!T();
+			if (ready.length >= size)
+				return ready;
+			writefln("pull-peek expected %d < available %d", size, ready.length);
+			auto chunk = buffer.alloc!T(size - ready.length);
+			writefln("pull-peek pull %d", size - ready.length);
+			size_t r = source.pull(chunk);
+			buffer.commit!T(r);
+			return cast(T[]) buffer.peek!T();
 		}
-	} else {
-		// pull can work with any element type
-		const(T)[] peek(T = ubyte)(size_t size) { return doPeek!T(size); }
-		void consume(T = ubyte)(size_t size) { doConsume!T(size); }
-	}
 
-	const(T)[] doPeek(T)(size_t size)
-	{
-		T[] tbuf = cast(T[]) buf;
-		if (peekOffset + size > tbuf.length) {
-			writefln("PullBuffer expected %d < available %d %x", peekOffset + size, tbuf.length, tbuf.ptr);
-			if (!tbuf)
-				tbuf = allocator.makeArray!T(size.alignUp(4096));
-			else
-				allocator.expandArray(tbuf, (peekOffset + size).alignUp(4096) - tbuf.length);
-			buf = tbuf;
-			writefln("PullBuffer grow %x %d", buf.ptr, buf.length);
-		}
-		if (peekOffset + size > readOffset) {
-			writefln("pull @%d %d", readOffset, tbuf.length - readOffset);
-			size_t r = source.pull(tbuf[readOffset .. $]);
-			//writefln("%(%02x%| %)", tbuf[readOffset .. readOffset + r]);
-			readOffset += r;
-		}
-		writefln("return %d-%d", peekOffset, tbuf.length);
-		return tbuf[peekOffset .. readOffset];
-	}
-
-	void doConsume(T)(size_t size)
-	{
-		T[] tbuf = cast(T[]) buf;
-		peekOffset += size;
-		if (peekOffset == tbuf.length) {
-			writefln("PullBuffer reset %d", buf.length);
-			peekOffset = 0;
-			readOffset = 0;
+		void consume(T = ElementType)(size_t size)
+			if (isPullable!(Source, T))
+		{
+			buffer.consume!T(size * T.sizeof);
 		}
 	}
 }
-static assert(isPeekSource!DefaultPullPeekAdapter);
-static assert(isPullSink!DefaultPullPeekAdapter);
+
+unittest {
+	import flod.buffer : NullBuffer;
+	static assert(isPeekSource!(DefaultPullPeekAdapter!NullBuffer));
+}
+
+///
+auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+	if (isPullPipeline!Pipeline)
+{
+	return pipeline.pipe!(DefaultPullPeekAdapter!Buffer)(buffer);
+}
+
+///
+auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
+	if (isPullPipeline!Pipeline)
+{
+	import flod.buffer : expandingBuffer;
+	return pipeline.pullPeek(expandingBuffer());
+}
+
 
 struct DefaultPeekPullAdapter(Source) {
 private:

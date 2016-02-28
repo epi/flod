@@ -538,9 +538,9 @@ body
 		debug pragma(msg, "Inserting implicit peek-pull adapter");
 		return pipeline.appendPipe!DefaultPeekPullAdapter.appendPipe!Stage(args);
 	} else static if (isPullable!Pipeline && isPeekSink!Stage) {
-		import flod.adapter : DefaultPullPeekAdapter;
+		import flod.adapter : pullPeek;
 		debug pragma(msg, "Inserting implicit pull-peek adapter");
-		return pipeline.appendPipe!DefaultPullPeekAdapter.appendPipe!Stage(args);
+		return pipeline.pullPeek.appendPipe!Stage(args);
 	} else {
 		// TODO: give a better diagnostic message
 		static assert(0, "Cannot instantiate " ~ str!Stage ~ "!" ~ str!Pipeline);
@@ -624,9 +624,9 @@ private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeli
 	} else static if (isPeekPipeline!Pipeline && isPeekSink!Stage) {
 		return ImmediateDeferredCtor(moveIfNonCopyable(pipeline), args);
 	} else static if (isPullPipeline!Pipeline && isPeekSink!Stage) {
-		import flod.adapter : DefaultPullPeekAdapter;
+		import flod.adapter : pullPeek;
 		debug pragma(msg, "Inserting implicit pull-peek adapter");
-		return pipeline.appendPipe!DefaultPullPeekAdapter.appendPipe!Stage(args);
+		return pipeline.pullPeek.appendPipe!Stage(args);
 	} else static if (isPeekPipeline!Pipeline && isPullSink!Stage) {
 		import flod.adapter : DefaultPeekPullAdapter;
 		debug pragma(msg, "Inserting implicit peek-pull adapter");
