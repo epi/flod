@@ -9,6 +9,13 @@ module flod.adapter;
 import flod.pipeline: isPullPipeline, isPeekPipeline;
 import flod.traits;
 
+size_t alignUp(size_t n, size_t al)
+{
+	return (n + al - 1) & ~(al - 1);
+}
+static assert(13.alignUp(4) == 16);
+static assert(31337.alignUp(4096) == 32768);
+
 struct DefaultPullPeekAdapter(Source) {
 	import std.experimental.allocator : IAllocator, processAllocator, expandArray, makeArray;
 	import std.stdio;
@@ -16,12 +23,12 @@ struct DefaultPullPeekAdapter(Source) {
 	import flod.meta : moveIfNonCopyable;
 
 	private {
-	Source source;
-	IAllocator allocator;
+		Source source;
+		IAllocator allocator;
 
-	void[] buf;
-	size_t readOffset;
-	size_t peekOffset;
+		void[] buf;
+		size_t readOffset;
+		size_t peekOffset;
 	}
 
 	this()(auto ref Source source, IAllocator allocator = processAllocator) {
@@ -51,19 +58,22 @@ struct DefaultPullPeekAdapter(Source) {
 	{
 		T[] tbuf = cast(T[]) buf;
 		if (peekOffset + size > tbuf.length) {
-			writefln("PullBuffer expected %d < available %d", peekOffset + size, tbuf.length);
+			writefln("PullBuffer expected %d < available %d %x", peekOffset + size, tbuf.length, tbuf.ptr);
 			if (!tbuf)
-				tbuf = allocator.makeArray!T(4096);
+				tbuf = allocator.makeArray!T(size.alignUp(4096));
 			else
-				allocator.expandArray(tbuf, ((peekOffset + size + 4095) & ~size_t(4095)) - tbuf.length);
+				allocator.expandArray(tbuf, (peekOffset + size).alignUp(4096) - tbuf.length);
 			buf = tbuf;
-			writefln("PullBuffer grow %d", buf.length);
+			writefln("PullBuffer grow %x %d", buf.ptr, buf.length);
 		}
 		if (peekOffset + size > readOffset) {
+			writefln("pull @%d %d", readOffset, tbuf.length - readOffset);
 			size_t r = source.pull(tbuf[readOffset .. $]);
+			//writefln("%(%02x%| %)", tbuf[readOffset .. readOffset + r]);
 			readOffset += r;
 		}
-		return tbuf[peekOffset .. $];
+		writefln("return %d-%d", peekOffset, tbuf.length);
+		return tbuf[peekOffset .. readOffset];
 	}
 
 	void doConsume(T)(size_t size)
