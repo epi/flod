@@ -40,18 +40,27 @@ public:
 	void consume(T)(size_t n) {};
 }
 
-/// A buffer that expands infinitely to ensure data peeked at are contiguous.
-struct ExpandingBuffer(Allocator = Mallocator) {
+/**
+A buffer that relies on moving chunks of data in memory
+to ensure that contiguous slices of any requested size can always be provided.
+Params:
+ Allocator = _Allocator used for internal storage allocation.
+*/
+struct MovingBuffer(Allocator = Mallocator) {
 private:
-	import std.stdio;
+	import core.exception : OutOfMemoryError;
+	import std.exception : enforceEx;
+
 	void[] buffer;
 	size_t peekOffset;
 	size_t allocOffset;
 	Allocator allocator;
 
-	this()(auto ref Allocator allocator) {
+	this()(auto ref Allocator allocator, size_t initialSize = 0) {
 		import flod.meta : moveIfNonCopyable;
 		this.allocator = moveIfNonCopyable(allocator);
+		if (initialSize > 0)
+			buffer = enforceEx!OutOfMemoryError(allocator.allocate(allocator.goodSize(initialSize)));
 	}
 
 	invariant {
@@ -64,12 +73,17 @@ public:
 	T[] alloc(T)(size_t n)
 	{
 		import std.experimental.allocator : reallocate;
+		import core.stdc.string : memmove;
 		size_t tn = T.sizeof * n;
 		if (buffer.length - allocOffset >= tn)
 			return cast(T[]) buffer[allocOffset .. $];
+		memmove(buffer.ptr, buffer.ptr + peekOffset, allocOffset - peekOffset);
+		allocOffset -= peekOffset;
+		peekOffset = 0;
 		size_t newSize = goodSize(allocator, allocOffset + tn);
-		allocator.reallocate(buffer, newSize);
-		assert(buffer.length - allocOffset >= n);
+		if (buffer.length < newSize)
+			allocator.reallocate(buffer, newSize);
+		assert(buffer.length - allocOffset >= tn);
 		return cast(T[]) buffer[allocOffset .. $];
 	}
 
@@ -102,22 +116,22 @@ public:
 }
 
 ///
-auto expandingBuffer(Allocator)(auto ref Allocator allocator)
+auto movingBuffer(Allocator)(auto ref Allocator allocator)
 {
-	return ExpandingBuffer!Allocator(allocator);
+	return MovingBuffer!Allocator(allocator);
 }
 
 ///
-auto expandingBuffer()
+auto movingBuffer()
 {
 	import std.experimental.allocator.mallocator : Mallocator;
-	return expandingBuffer(Mallocator.instance);
+	return movingBuffer(Mallocator.instance);
 }
 
 unittest {
 	import std.range : iota, array, put;
 	import std.algorithm : copy;
-	auto b = expandingBuffer();
+	auto b = movingBuffer();
 	static assert(is(typeof(b)));
 	assert(b.peek!uint().length == 0);
 	b.consume!uint(0);

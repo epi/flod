@@ -81,8 +81,8 @@ auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buff
 auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	if (isPullPipeline!Pipeline)
 {
-	import flod.buffer : expandingBuffer;
-	return pipeline.pullPeek(expandingBuffer());
+	import flod.buffer : movingBuffer;
+	return pipeline.pullPeek(movingBuffer());
 }
 
 
