@@ -49,18 +49,18 @@ Params:
 struct MovingBuffer(Allocator = Mallocator) {
 private:
 	import core.exception : OutOfMemoryError;
-	import std.exception : enforceEx;
 
 	void[] buffer;
 	size_t peekOffset;
 	size_t allocOffset;
 	Allocator allocator;
 
-	this()(auto ref Allocator allocator, size_t initialSize = 0) {
+	this()(auto ref Allocator allocator, size_t initialSize = 0)
+	{
 		import flod.meta : moveIfNonCopyable;
 		this.allocator = moveIfNonCopyable(allocator);
 		if (initialSize > 0)
-			buffer = enforceEx!OutOfMemoryError(allocator.allocate(allocator.goodSize(initialSize)));
+			buffer = allocator.allocate(allocator.goodSize(initialSize));
 	}
 
 	invariant {
@@ -83,7 +83,7 @@ public:
 		size_t newSize = goodSize(allocator, allocOffset + tn);
 		if (buffer.length < newSize)
 			allocator.reallocate(buffer, newSize);
-		assert(buffer.length - allocOffset >= tn);
+		assert(buffer.length - allocOffset >= tn); // TODO: let it return smaller chunk and the user will handle it
 		return cast(T[]) buffer[allocOffset .. $];
 	}
 
@@ -96,7 +96,7 @@ public:
 		assert(allocOffset <= buffer.length);
 	}
 
-	/// Return a read-only slice of the buffer, typed as `const(T)[]`, containing all data available in the buffer.
+	/// Returns a read-only slice, typed as `const(T)[]`, containing all data currently available in the buffer.
 	const(T)[] peek(T)()
 	{
 		return cast(const(T)[]) buffer[peekOffset .. allocOffset];
@@ -128,31 +128,220 @@ auto movingBuffer()
 	return movingBuffer(Mallocator.instance);
 }
 
+version(unittest) {
+	private void testBuffer(Buffer)(auto ref Buffer b)
+	{
+		import std.range : iota, array, put;
+		import std.algorithm : copy;
+		static assert(is(typeof(b)));
+		assert(b.peek!uint().length == 0);
+		b.consume!uint(0);
+		auto chunk = b.alloc!uint(1);
+		assert(chunk.length >= 1);
+		assert(b.peek!uint().length == 0);
+		chunk = b.alloc!uint(31337);
+		assert(chunk.length >= 31337);
+		auto arr = iota!uint(0, chunk.length).array();
+		iota!uint(0, cast(uint) chunk.length).copy(chunk[0 .. $]);
+		b.commit!uint(1312);
+		assert(b.peek!uint()[] == arr[0 .. 1312]);
+		b.commit!uint(chunk.length - 1312);
+		assert(b.peek!uint()[] == arr[]);
+		b.consume!uint(0);
+		assert(b.peek!uint()[] == arr[]);
+		b.consume!uint(15);
+		assert(b.peek!uint()[] == arr[15 .. $]);
+		// TODO: put more stress on the buffer
+	}
+}
+
 unittest {
-	import std.range : iota, array, put;
-	import std.algorithm : copy;
 	auto b = movingBuffer();
-	static assert(is(typeof(b)));
-	assert(b.peek!uint().length == 0);
-	b.consume!uint(0);
-	auto chunk = b.alloc!uint(1);
-	assert(chunk.length >= 1);
-	assert(b.peek!uint().length == 0);
-	chunk = b.alloc!uint(31337);
-	assert(chunk.length >= 31337);
-	auto arr = iota!uint(0, chunk.length).array();
-	iota!uint(0, cast(uint) chunk.length).copy(chunk[0 .. $]);
-	b.commit!uint(1312);
-	assert(b.peek!uint()[] == arr[0 .. 1312]);
-	b.commit!uint(chunk.length - 1312);
-	assert(b.peek!uint()[] == arr[]);
-	b.consume!uint(0);
-	assert(b.peek!uint()[] == arr[]);
-	b.consume!uint(15);
-	assert(b.peek!uint()[] == arr[15 .. $]);
+	testBuffer(b);
 	// consume everything and check if b will reset its pointers.
 	b.consume!uint(b.peek!uint().length);
 	assert(b.peek!uint().length == 0);
 	assert(b.allocOffset == 0);
 	assert(b.peekOffset == 0);
+}
+
+/**
+A circular buffer which avoids moving data around, but instead maps the same physical memory block twice
+into two adjacent virtual memory blocks.
+It $(U does) move data blocks when growing the buffer.
+*/
+struct MmappedBuffer {
+private:
+	enum pageSize = 4096;
+	import flod.meta : NonCopyable;
+	mixin NonCopyable;
+
+	import core.sys.posix.stdlib : mkstemp;
+	import core.sys.posix.unistd : close, unlink, ftruncate;
+	import core.sys.posix.sys.mman : mmap, munmap,
+		MAP_ANON, MAP_PRIVATE, MAP_FIXED, MAP_SHARED, MAP_FAILED, PROT_WRITE, PROT_READ;
+
+	void[] buffer;
+	size_t peekOffset;
+	size_t peekableLength;
+	int fd = -1;
+	ulong wraps = 0;
+
+	@property size_t allocOffset() const pure nothrow
+	{
+		auto ao = peekOffset + peekableLength;
+		if (ao <= buffer.length)
+			return ao;
+		return ao - buffer.length;
+	}
+
+	@property size_t allocableLength() const pure nothrow { return buffer.length - peekableLength; }
+
+	invariant {
+		assert(peekOffset <= buffer.length);
+	}
+
+	this(size_t initialSize)
+	{
+		if (!createFile())
+			return;
+		if (initialSize)
+			buffer = allocate(initialSize);
+	}
+
+	bool createFile()()
+	{
+		static immutable path = "/dev/shm/flod-buffer-XXXXXX";
+		char[path.length + 1] mutablePath = path.ptr[0 .. path.length + 1];
+		fd = mkstemp(mutablePath.ptr);
+		if (fd < 0)
+			return false;
+		if (unlink(mutablePath.ptr) != 0) {
+			close(fd);
+			fd = -1;
+			return false;
+		}
+		return true;
+	}
+
+	void[] allocate(size_t length)
+	{
+		length = length.alignUp(pageSize);
+		if (fd < 0)
+			return null;
+		if (ftruncate(fd, length) != 0)
+			return null;
+
+		// first, make sure that a contiguous virtual memory range of 2 * length bytes is available
+		void* anon = mmap(null, length * 2, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+		if (anon == MAP_FAILED)
+			return null;
+
+		// then map the 2 halves inside to the same range of physical memory
+		void* p = mmap(anon, length, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, 0);
+		if (p == MAP_FAILED) {
+			munmap(anon, length * 2);
+			return null;
+		}
+		assert(p == anon);
+		p = mmap(anon + length, length, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, 0);
+		if (p == MAP_FAILED) {
+			munmap(anon, length * 2);
+			return null;
+		}
+		assert(p == anon + length);
+		return anon[0 .. length];
+	}
+
+	bool reallocate(size_t length)
+	{
+		if (length == buffer.length)
+			return true;
+		auto newbuf = allocate(length);
+		if (!newbuf)
+			return false;
+		newbuf.ptr[peekOffset .. peekOffset + peekableLength] = buffer.ptr[peekOffset .. peekOffset + peekableLength];
+		if (peekOffset > allocOffset) {
+			auto po1 = peekOffset;
+			auto po2 = newbuf.length - buffer.length;
+			peekOffset += newbuf.length - buffer.length;
+			if (peekOffset >= newbuf.length)
+				peekOffset -= newbuf.length;
+		}
+		deallocate(buffer);
+		buffer = newbuf;
+		return true;
+	}
+
+	static void deallocate(ref void[] b)
+	{
+		if (b.ptr) {
+			munmap(b.ptr, b.length << 1);
+			b = null;
+		}
+	}
+
+public:
+	~this()
+	{
+		deallocate(buffer);
+		if (fd >= 0) {
+			close(fd);
+			fd = -1;
+		}
+	}
+
+	/// Returns a read-only slice, typed as `const(T)[]`, containing all data currently available in the buffer.
+	const(T)[] peek(T)()
+	{
+		auto typed = cast(const(T*)) (buffer.ptr + peekOffset);
+		auto count = peekableLength / T.sizeof;
+		return typed[0 .. count];
+	}
+
+	/// Removes first `n` objects of type `T` from the buffer.
+	void consume(T)(size_t n)
+	{
+		size_t tn = T.sizeof * n;
+		assert(peekableLength >= tn);
+		peekOffset += tn;
+		peekableLength -= tn;
+		if (peekOffset >= buffer.length) {
+			peekOffset -= buffer.length;
+			wraps++;
+		}
+	}
+
+	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
+	T[] alloc(T)(size_t n)
+	{
+		auto typed = cast(T*) (buffer.ptr + allocOffset);
+		auto count = allocableLength / T.sizeof;
+		if (n <= count)
+			return typed[0 .. count];
+		// make sure at least T[n] will be available behind what's currently peekable
+		reallocate(peekOffset + peekableLength + n * T.sizeof);
+		typed = cast(T*) (buffer.ptr + allocOffset);
+		count = allocableLength / T.sizeof;
+		assert(count >= n); // TODO: let it return smaller chunk and the user will handle it
+		return typed[0 .. count];
+	}
+
+	/// Adds first `n` objects of type `T` stored in the slice previously obtained using `alloc`.
+	/// Does not touch the remaining part of that slice.
+	void commit(T)(size_t n)
+	{
+		size_t tn = T.sizeof * n;
+		assert(tn <= allocableLength);
+		peekableLength += tn;
+	}
+}
+
+auto mmappedBuffer(size_t initialSize = 0)
+{
+	return MmappedBuffer(initialSize);
+}
+
+unittest {
+	testBuffer(mmappedBuffer());
 }

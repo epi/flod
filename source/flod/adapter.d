@@ -51,7 +51,7 @@ private template DefaultPullPeekAdapter(Buffer)
 				return ready;
 			writefln("pull-peek expected %d < available %d", size, ready.length);
 			auto chunk = buffer.alloc!T(size - ready.length);
-			writefln("pull-peek pull %d", size - ready.length);
+			//writefln("pull-peek pull %d", size - ready.length);
 			size_t r = source.pull(chunk);
 			buffer.commit!T(r);
 			return cast(T[]) buffer.peek!T();
@@ -81,8 +81,8 @@ auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buff
 auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	if (isPullPipeline!Pipeline)
 {
-	import flod.buffer : movingBuffer;
-	return pipeline.pullPeek(movingBuffer());
+	import flod.buffer : mmappedBuffer;
+	return pipeline.pullPeek(mmappedBuffer());
 }
 
 
@@ -261,105 +261,5 @@ class PushPull(Sink)
 		auto l = min(inbuf.length, outbuf.length);
 		outbuf[0 .. l] = inbuf[0 .. l];
 		consume(l);
-	}
-}
-
-struct CircularPullBuffer(Source)
-{
-	import std.stdio;
-	import std.exception : enforce;
-	import core.sys.posix.stdlib : mkstemp;
-	import core.sys.posix.unistd : close, unlink, ftruncate;
-	import core.sys.posix.sys.mman : mmap, munmap, MAP_ANON, MAP_PRIVATE, MAP_FIXED, MAP_SHARED, MAP_FAILED, PROT_WRITE, PROT_READ;
-
-	import flod.traits : FixedPullType, hasGenericPull;
-
-	Source source;
-	private {
-		void* buffer;
-		size_t length;
-		size_t peekOffset;
-		size_t readOffset;
-	}
-
-	this(Source source)
-	{
-		enum order = 12;
-		length = size_t(1) << order;
-		int fd = createFile();
-		scope(exit) close(fd);
-		allocate(fd);
-		this.source = source;
-	}
-
-	void dispose()
-	{
-		if (buffer) {
-			munmap(buffer, length << 1);
-			buffer = null;
-		}
-	}
-
-	private int createFile()
-	{
-		static immutable path = "/dev/shm/flod-CompactPullBuffer-XXXXXX";
-		char[path.length + 1] mutablePath = path.ptr[0 .. path.length + 1];
-		int fd = mkstemp(mutablePath.ptr);
-		enforce(fd >= 0, "Failed to create shm file");
-		scope(failure) enforce(close(fd) == 0, "Failed to close shm file");
-		enforce(unlink(mutablePath.ptr) == 0, "Failed to unlink shm file " ~ mutablePath);
-		enforce(ftruncate(fd, length) == 0, "Failed to set shm file size");
-		return fd;
-	}
-
-	private void allocate(int fd)
-	{
-		void* addr = mmap(null, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-		enforce(addr != MAP_FAILED, "Failed to mmap 1st part");
-		scope(failure) munmap(addr, length);
-		buffer = addr;
-		addr = mmap(buffer + length, length, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, 0);
-		if (addr != buffer + length) {
-			assert(addr == MAP_FAILED);
-			addr = mmap(buffer - length, length, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, 0);
-			// TODO: if failed, try mmapping anonymous buf of 2 * length, then mmap the two copies inside it
-			enforce(addr == buffer - length, "Failed to mmap 2nd part");
-			buffer = addr;
-		}
-		import std.stdio;
-		writefln("%016x,%08x", buffer, length * 2);
-	}
-
-	static if (is(FixedPullType!Source)) {
-		alias PullType = FixedPullType!Source;
-		const(PullType)[] peek()(size_t size) { return doPeek!PullType(size); }
-		void consume()(size_t size) { doConsume!PullType(size); }
-	}
-	static if (hasGenericPull!Source) {
-		const(T)[] peek(T)(size_t size) { return doPeek!T(size); }
-		void consume(T)(size_t size) { doConsume!T(size); }
-	}
-
-	private const(T)[] doPeek(T)(size_t size)
-	{
-		enforce(size <= length, "Growing buffer not implemented");
-		auto buf = cast(T*) buffer;
-		assert(readOffset <= peekOffset + 4096);
-		while (peekOffset + size > readOffset)
-			readOffset += source.pull(buf[readOffset .. readOffset]); //peekOffset + 4096]);
-		assert(buf[0 .. length] == buf[length .. 2 *length]);
-		stderr.writefln("%08x,%08x", peekOffset, readOffset - peekOffset);
-		return buf[peekOffset .. readOffset];
-	}
-
-	private void doConsume(T)(size_t size)
-	{
-		assert(peekOffset + size <= readOffset);
-		peekOffset += size;
-		if (peekOffset >= length) {
-			peekOffset -= length;
-			readOffset -= length;
-		}
-		writefln("%08x %08x", peekOffset, readOffset);
 	}
 }
