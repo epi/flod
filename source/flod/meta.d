@@ -1,7 +1,10 @@
-///
+/** Various metaprogramming helpers.
+ *
+ *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+ *  Copyright: © 2016 Adrian Matoga
+ *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+ */
 module flod.meta;
-
-package:
 
 /// Used to compare alias lists.
 struct Id(X...) {}
@@ -67,15 +70,13 @@ unittest {
 	static assert(is(Z!List == Z!(Empty, bool, float, Empty, ulong, double)));
 }
 
-public:
-
 /// Mix it in inside a `struct` definition to make the `struct` non-copyable.
 mixin template NonCopyable() {
 	@disable this(this);
 	@disable void opAssign(typeof(this));
 }
 
-///
+/// Evaluates to true iff instances of `T` can be copied.
 template isCopyable(T) {
 	enum isCopyable = is(typeof({ T a; T b = a; T c = b; }));
 }
@@ -87,7 +88,7 @@ unittest {
 	static assert(!isCopyable!B);
 }
 
-///
+/// Forwards to `std.algorithm.move` iff `t` is non-copyable.
 auto moveIfNonCopyable(T)(auto ref T t)
 {
 	static if (isCopyable!T) {
