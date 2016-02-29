@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class=" module">traits</a>
@@ -63,16 +62,22 @@ $('#symbolSearchPane').show();
 		<div id="main-contents">
 			<h1>Function run</h1>
 			<section>
-				<p>Run a <code class="prettyprint lang-d"><a href="../../flod/pipeline/run.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a></code> by repeatedly calling <code class="prettyprint lang-d">pipeline.step</code>.
+				<p>Run a <code class="lang-d"><a href="../../flod/pipeline/run.html#pipeline"><code class="lang-d"><span class="pln">pipeline</span></code></a></code><code class="lang-d"> by repeatedly calling </code><code class="lang-d">pipeline.step</code>.
 </p>
 
 					<section>
 						<h3>Prototype</h3>
-						<pre class="code prettyprint lang-d prototype">
-int run(Pipeline)(
-&nbsp;&nbsp;auto ref Pipeline pipeline
-)
-if (isRunnable!Pipeline);</pre>
+						<div class="prototype">
+							<code class="lang-d">
+<span class="typ">int</span> <span class="pln">run</span><span class="pun">(</span><span class="typ">Pipeline</span><span class="pun">)</span><span class="pun">(</span>
+								<br/>
+&nbsp;&nbsp;<span class="kwd">auto ref </span><span class="typ">Pipeline</span> <span class="pln">pipeline</span>
+								<br/>
+<span class="pun">)</span>
+								<br/>
+<span class="kwd">if</span> <span class="pun">(</span><span class="pln">isRunnable</span><span class="pun">!</span><span class="typ">Pipeline</span><span class="pun">);</span>
+							</code>
+						</div>
 					</section>
 
 			</section>

@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class=" module">traits</a>
@@ -67,8 +66,11 @@ $('#symbolSearchPane').show();
 
 					<section>
 						<h3>Declaration</h3>
-						<pre class="code prettyprint lang-d prototype">
-enum isImmediatePipeline(P) = isPeekPipeline!P || isPullPipeline!P;</pre>
+						<div class="prototype">
+							<code class="lang-d">
+<span class="kwd">enum</span> <span class="pln">isImmediatePipeline</span><span class="pun">(</span><span class="pln">P</span><span class="pun">)</span> <span class="pun">=</span> <span class="pln">isPeekPipeline</span><span class="pun">!</span><span class="pln">P </span><span class="pun">|| </span><span class="pln">isPullPipeline</span><span class="pun">!</span><span class="pln">P</span><span class="pun">;</span>
+							</code>
+						</div>
 					</section>
 
 			</section>

@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../styles/ddox.css"/>
 		<link rel="stylesheet" href="../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../flod/traits.html" class=" module">traits</a>
@@ -62,7 +61,9 @@ $('#symbolSearchPane').show();
 		</nav>
 		<div id="main-contents">
 			<h1>Module flod.meta</h1>
-			<p></p>
+			<p>Various metaprogramming helpers.
+</p>
+<section></section>
 
 			<section></section>
 			<section>
@@ -79,7 +80,27 @@ $('#symbolSearchPane').show();
 								<code>moveIfNonCopyable</code>
 							</a>
 						</td>
-						<td></td>
+						<td>Forwards to <code class="lang-d">std.algorithm.move</code><code class="lang-d"> iff </code><code class="lang-d">t</code> is non-copyable.
+</td>
+					</tr>
+				</table>
+			</section>
+			<section>
+				<h2>Structs</h2>
+				<table>
+					<col class="caption"/>
+					<tr>
+						<th>Name</th>
+						<th>Description</th>
+					</tr>
+					<tr>
+						<td>
+							<a id="Id" class="public" href="../flod/meta/Id.html">
+								<code>Id</code>
+							</a>
+						</td>
+						<td>Used to compare alias lists.
+</td>
 					</tr>
 				</table>
 			</section>
@@ -97,8 +118,24 @@ $('#symbolSearchPane').show();
 								<code>NonCopyable</code>
 							</a>
 						</td>
-						<td>Mix it in inside a <code class="prettyprint lang-d">struct</code> definition to make the <code class="prettyprint lang-d">struct</code> non-copyable.
+						<td>Mix it in inside a <code class="lang-d">struct</code><code class="lang-d"> definition to make the </code><code class="lang-d">struct</code> non-copyable.
 </td>
+					</tr>
+					<tr>
+						<td>
+							<a id="ReplaceWithMask" class="public" href="../flod/meta/ReplaceWithMask.html">
+								<code>ReplaceWithMask</code>
+							</a>
+						</td>
+						<td></td>
+					</tr>
+					<tr>
+						<td>
+							<a id="str" class="public" href="../flod/meta/str.html">
+								<code>str</code>
+							</a>
+						</td>
+						<td></td>
 					</tr>
 				</table>
 			</section>
@@ -119,20 +156,38 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td></td>
+						<td>Evaluates to true iff instances of <code class="lang-d">T</code> can be copied.
+</td>
+					</tr>
+					<tr>
+						<td>
+							<a id="isType" class="public" href="../flod/meta/isType.html">
+								<code>isType</code>
+							</a>
+						</td>
+						<td>
+						</td>
+						<td>Tests if template <code class="lang-d">S</code><code class="lang-d"> can be instantiated with argument list </code><code class="lang-d">A</code> and the instantiation is a type.
+</td>
 					</tr>
 				</table>
 			</section>
 			<section>
 				<h2>Authors</h2>
+<p><a href="https://github.com/epi">Adrian Matoga</a>
+</p>
 
 			</section>
 			<section>
 				<h2>Copyright</h2>
+<p>© 2016 Adrian Matoga
+</p>
 
 			</section>
 			<section>
 				<h2>License</h2>
+<p><a href="http://www.boost.org/users/license.html">BSL-1.0</a>.
+</p>
 
 			</section>
 		</div>

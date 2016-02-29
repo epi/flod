@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../styles/ddox.css"/>
 		<link rel="stylesheet" href="../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../flod/traits.html" class="selected module">traits</a>
@@ -62,10 +61,9 @@ $('#symbolSearchPane').show();
 		</nav>
 		<div id="main-contents">
 			<h1>Module flod.traits</h1>
-			<p> This module defines templates for determining characteristics of stream components at compile time.
+			<p>This module defines templates for determining characteristics of stream components at compile time.
 </p>
-<section>
-</section>
+<section></section>
 
 			<section></section>
 			<section>
@@ -78,8 +76,34 @@ $('#symbolSearchPane').show();
 					</tr>
 					<tr>
 						<td>
+							<a id="CommonType" class="public" href="../flod/traits/CommonType.html">
+								<code>CommonType</code>
+							</a>
+						</td>
+						<td>Aliases to the element type can be accepted by both <code class="lang-d">Source</code><code class="lang-d"> and </code><code class="lang-d">Sink</code> stages.
+If both can work on any types and do not specify defaults, <code class="lang-d">CommonType</code><code class="lang-d"> aliases to </code><code class="lang-d">DefaultType</code>.
+</td>
+					</tr>
+					<tr>
+						<td>
+							<a id="DefaultAllocType" class="public" href="../flod/traits/DefaultAllocType.html">
+								<code>DefaultAllocType</code>
+							</a>
+						</td>
+						<td></td>
+					</tr>
+					<tr>
+						<td>
 							<a id="DefaultPeekType" class="public" href="../flod/traits/DefaultPeekType.html">
 								<code>DefaultPeekType</code>
+							</a>
+						</td>
+						<td></td>
+					</tr>
+					<tr>
+						<td>
+							<a id="FixedAllocType" class="public" href="../flod/traits/FixedAllocType.html">
+								<code>FixedAllocType</code>
 							</a>
 						</td>
 						<td></td>
@@ -127,7 +151,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td> Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S[0]</code> is a source and <code class="prettyprint lang-d">S[1]</code> is a sink and they both use the same
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S[0]</code><code class="lang-d"> is a source and </code><code class="lang-d">S[1]</code> is a sink and they both use the same
   method of passing data.
 </td>
 					</tr>
@@ -169,7 +193,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink to which data can be written by calling <code class="prettyprint lang-d">alloc()</code> and <code class="prettyprint lang-d">commit()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a sink to which data can be written by calling </code><code class="lang-d">alloc()</code><code class="lang-d"> and </code><code class="lang-d">commit()</code>.
 </td>
 					</tr>
 					<tr>
@@ -180,7 +204,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source which writes data by calling <code class="prettyprint lang-d">alloc()</code> and <code class="prettyprint lang-d">commit()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a source which writes data by calling </code><code class="lang-d">alloc()</code><code class="lang-d"> and </code><code class="lang-d">commit()</code>.
 </td>
 					</tr>
 					<tr>
@@ -221,7 +245,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink which reads data by calling <code class="prettyprint lang-d">peek()</code> and <code class="prettyprint lang-d">consume()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a sink which reads data by calling </code><code class="lang-d">peek()</code><code class="lang-d"> and </code><code class="lang-d">consume()</code>.
 </td>
 					</tr>
 					<tr>
@@ -232,7 +256,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source from which data can be read by calling <code class="prettyprint lang-d">peek()</code> and <code class="prettyprint lang-d">consume()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a source from which data can be read by calling </code><code class="lang-d">peek()</code><code class="lang-d"> and </code><code class="lang-d">consume()</code>.
 </td>
 					</tr>
 					<tr>
@@ -253,7 +277,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink which reads data by calling <code class="prettyprint lang-d">pull()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a sink which reads data by calling </code><code class="lang-d">pull()</code>.
 </td>
 					</tr>
 					<tr>
@@ -264,7 +288,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source from which data can be read by calling <code class="prettyprint lang-d">pull()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a source from which data can be read by calling </code><code class="lang-d">pull()</code>.
 </td>
 					</tr>
 					<tr>
@@ -285,7 +309,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink to which data can be written by calling <code class="prettyprint lang-d">push()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a sink to which data can be written by calling </code><code class="lang-d">push()</code>.
 </td>
 					</tr>
 					<tr>
@@ -296,7 +320,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source which writes data by calling <code class="prettyprint lang-d">push()</code>.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a source which writes data by calling </code><code class="lang-d">push()</code>.
 </td>
 					</tr>
 					<tr>
@@ -317,7 +341,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink of any kind.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code> is a sink of any kind.
 </td>
 					</tr>
 					<tr>
@@ -328,7 +352,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink but not a source.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code> is a sink but not a source.
 </td>
 					</tr>
 					<tr>
@@ -339,7 +363,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source of any kind.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code> is a source of any kind.
 </td>
 					</tr>
 					<tr>
@@ -350,7 +374,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source but not a sink.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code> is a source but not a sink.
 </td>
 					</tr>
 					<tr>
@@ -361,7 +385,7 @@ $('#symbolSearchPane').show();
 						</td>
 						<td>
 						</td>
-						<td>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a source or a sink.
+						<td>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code> is a source or a sink.
 </td>
 					</tr>
 				</table>

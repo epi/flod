@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="./styles/ddox.css"/>
 		<link rel="stylesheet" href="./prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="./scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="./prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="./scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="./flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="./flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="./flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="./flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="./flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="./flod/traits.html" class=" module">traits</a>
@@ -73,7 +72,16 @@ $('#symbolSearchPane').show();
 					<a href="./flod/adapter.html">flod.adapter</a>
 				</td>
 				<td>
- Adapters connecting stages with incompatible interfaces.
+Adapters connecting stages with incompatible interfaces.
+
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<a href="./flod/buffer.html">flod.buffer</a>
+				</td>
+				<td>
+Various buffer implementations.
 
 				</td>
 			</tr>
@@ -82,7 +90,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/common.html">flod.common</a>
 				</td>
 				<td>
- Commonly used stream sources, filters and sinks.
+Commonly used stream sources, filters and sinks.
 
 				</td>
 			</tr>
@@ -91,7 +99,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/file.html">flod.file</a>
 				</td>
 				<td>
- Streams for reading and writing files.
+Streams for reading and writing files.
 
 				</td>
 			</tr>
@@ -100,6 +108,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/meta.html">flod.meta</a>
 				</td>
 				<td>
+Various metaprogramming helpers.
 
 				</td>
 			</tr>
@@ -108,7 +117,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/pipeline.html">flod.pipeline</a>
 				</td>
 				<td>
- Pipeline composition.
+Pipeline composition.
 
 				</td>
 			</tr>
@@ -117,16 +126,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/range.html">flod.range</a>
 				</td>
 				<td>
- Stream iteration functions.
-
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<a href="./flod/stream.html">flod.stream</a>
-				</td>
-				<td>
- Construct stream objects out of pipelines or single stream components.
+Convert pipelines to ranges (of chunks, text lines, etc.).
 
 				</td>
 			</tr>
@@ -135,7 +135,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod/traits.html">flod.traits</a>
 				</td>
 				<td>
- This module defines templates for determining characteristics of stream components at compile time.
+This module defines templates for determining characteristics of stream components at compile time.
 
 				</td>
 			</tr>
@@ -144,7 +144,7 @@ $('#symbolSearchPane').show();
 					<a href="./flod.html">flod</a>
 				</td>
 				<td>
-High-level interface for <b>flod</b>. Provides the most commonly used functions of the package.
+High-level interface for <b><code class="lang-d"><span class="pln">flod</span></code></b>. Provides the most commonly used functions of the package.
 
 				</td>
 			</tr>

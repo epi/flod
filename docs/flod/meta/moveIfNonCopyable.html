@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class=" module">traits</a>
@@ -63,27 +62,39 @@ $('#symbolSearchPane').show();
 		<div id="main-contents">
 			<h1>Function moveIfNonCopyable</h1>
 			<section>
-				<p></p>
+				<p>Forwards to <code class="lang-d">std.algorithm.move</code><code class="lang-d"> iff </code><code class="lang-d"><a href="../../flod/meta/moveIfNonCopyable.html#t"><code class="lang-d"><span class="pln">t</span></code></a></code> is non-copyable.
+</p>
 
 					<section>
 						<h3>Prototype</h3>
-						<pre class="code prettyprint lang-d prototype">
-auto moveIfNonCopyable(T)(
-&nbsp;&nbsp;auto ref T t
-);</pre>
+						<div class="prototype">
+							<code class="lang-d">
+auto <span class="pln">moveIfNonCopyable</span><span class="pun">(</span><span class="pln">T</span><span class="pun">)</span><span class="pun">(</span>
+								<br/>
+&nbsp;&nbsp;<span class="kwd">auto ref </span><span class="pln">T</span> <span class="pln">t</span>
+								<br/>
+<span class="pun">)</span><span class="pun">;</span>
+							</code>
+						</div>
 					</section>
 
 			</section>
 			<section>
 				<h2>Authors</h2>
+<p><a href="https://github.com/epi">Adrian Matoga</a>
+</p>
 
 			</section>
 			<section>
 				<h2>Copyright</h2>
+<p>© 2016 Adrian Matoga
+</p>
 
 			</section>
 			<section>
 				<h2>License</h2>
+<p><a href="http://www.boost.org/users/license.html">BSL-1.0</a>.
+</p>
 
 			</section>
 		</div>

@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="./styles/ddox.css"/>
 		<link rel="stylesheet" href="./prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="./scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="./prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="./scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class="collapsed tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="./flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="./flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="./flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="./flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="./flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="./flod/traits.html" class=" module">traits</a>
@@ -62,17 +61,15 @@ $('#symbolSearchPane').show();
 		</nav>
 		<div id="main-contents">
 			<h1>Module flod</h1>
-			<p>High-level interface for <b>flod</b>. Provides the most commonly used functions of the package.
+			<p>High-level interface for <b><code class="lang-d"><span class="pln"><span class="pln">flod</span></span></code></b>. Provides the most commonly used functions of the package.
 </p>
-<section>
-</section>
+<section></section>
 
 			<section><section><h2>Package description</h2>
-
-<p><b>flod</b> is a library for processing streams of data using composable building blocks.
+<p><b><code class="lang-d"><span class="pln">flod</span></code></b> is a library for processing streams of data using composable building blocks.
 </p>
 
-<p>In <b>flod</b>, a <i>pipeline</i> is a chain of one or more <i>stages</i>, which communicate with
+<p>In <b><code class="lang-d"><span class="pln">flod</span></code></b>, a <i>pipeline</i> is a chain of one or more <i>stages</i>, which communicate with
 each other using the specified interfaces.
 </p>
 
@@ -86,18 +83,17 @@ or cipher implementations.
 </p>
 
 <p>There are four methods of passing data from a source to a sink:
-<table><tr><th>method</th>     <th>description</th>                                         <th>buffer is owned by</th></tr>
- <tr><td><i>pull</i></td>  <td><code class="prettyprint lang-d">sink</code> calls <code class="prettyprint lang-d">source.pull()</code></td>                        <td>sink</td></tr>
- <tr><td><i>push</i></td>  <td><code class="prettyprint lang-d">source</code> calls <code class="prettyprint lang-d">sink.push()</code></td>                        <td>source</td></tr>
- <tr><td><i>peek</i></td>  <td><code class="prettyprint lang-d">sink</code> calls <code class="prettyprint lang-d">source.peek()</code> and <code class="prettyprint lang-d">source.consume()</code></td> <td>source</td></tr>
- <tr><td><i>alloc</i></td> <td><code class="prettyprint lang-d">source</code> calls <code class="prettyprint lang-d">sink.alloc()</code> and <code class="prettyprint lang-d">sink.commit()</code></td>   <td>sink</td></tr>
+<table> <tr><th>method</th>     <th>description</th>                                         <th>buffer is owned by</th></tr>
+ <tr><td><i>pull</i></td>  <td><code class="lang-d">sink</code><code class="lang-d"> calls </code><code class="lang-d">source.pull()</code></td>                        <td>sink</td></tr>
+ <tr><td><i>push</i></td>  <td><code class="lang-d">source</code><code class="lang-d"> calls </code><code class="lang-d">sink.push()</code></td>                        <td>source</td></tr>
+ <tr><td><i>peek</i></td>  <td><code class="lang-d">sink</code><code class="lang-d"> calls </code><code class="lang-d">source.peek()</code><code class="lang-d"> and </code><code class="lang-d">source.consume()</code></td> <td>source</td></tr>
+ <tr><td><i>alloc</i></td> <td><code class="lang-d">source</code><code class="lang-d"> calls </code><code class="lang-d">sink.alloc()</code><code class="lang-d"> and </code><code class="lang-d">sink.commit()</code></td>   <td>sink</td></tr>
 </table>
 </p>
 
 <p>Note that a filter can use different methods for its sink and source ends. For example, it may
-call <code class="prettyprint lang-d">peek</code> and <code class="prettyprint lang-d">consume</code> to access the input data, and output transformed data using <code class="prettyprint lang-d">push</code>.
+call <code class="lang-d">peek</code><code class="lang-d"> and </code><code class="lang-d">consume</code><code class="lang-d"> to access the input data, and output transformed data using </code><code class="lang-d">push</code>.
 </p>
-
 </section>
 </section>
 			<section>

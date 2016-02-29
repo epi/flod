@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class=" module">traits</a>
@@ -63,26 +62,35 @@ $('#symbolSearchPane').show();
 		<div id="main-contents">
 			<h1>Template NonCopyable</h1>
 			<section>
-				<p>Mix it in inside a <code class="prettyprint lang-d">struct</code> definition to make the <code class="prettyprint lang-d">struct</code> non-copyable.
+				<p>Mix it in inside a <code class="lang-d">struct</code><code class="lang-d"> definition to make the </code><code class="lang-d">struct</code> non-copyable.
 </p>
 
 					<section>
 						<h2>Arguments</h2>
-						<pre class="code prettyprint lang-d prototype">
-template NonCopyable();</pre>
+						<div class="prototype">
+							<code class="lang-d">
+<span class="kwd">template</span> <span class="pln">NonCopyable</span><span class="pun">()</span>;
+							</code>
+						</div>
 					</section>
 
 			</section>
 			<section>
 				<h2>Authors</h2>
+<p><a href="https://github.com/epi">Adrian Matoga</a>
+</p>
 
 			</section>
 			<section>
 				<h2>Copyright</h2>
+<p>© 2016 Adrian Matoga
+</p>
 
 			</section>
 			<section>
 				<h2>License</h2>
+<p><a href="http://www.boost.org/users/license.html">BSL-1.0</a>.
+</p>
 
 			</section>
 		</div>

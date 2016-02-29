@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class="selected module">traits</a>
@@ -63,14 +62,17 @@ $('#symbolSearchPane').show();
 		<div id="main-contents">
 			<h1>Enum member areCompatible</h1>
 			<section>
-				<p> Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S[0]</code> is a source and <code class="prettyprint lang-d">S[1]</code> is a sink and they both use the same
+				<p>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S[0]</code><code class="lang-d"> is a source and </code><code class="lang-d">S[1]</code> is a sink and they both use the same
   method of passing data.
 </p>
 
 					<section>
 						<h3>Declaration</h3>
-						<pre class="code prettyprint lang-d prototype">
-enum areCompatible(S...) = isPeekSource!(S[0]) && isPeekSink!(S[1]) || isPullSource!(S[0]) && isPullSink!(S[1]) || isAllocSource!(S[0]) && isAllocSink!(S[1]) || isPushSource!(S[0]) && isPushSink!(S[1]);</pre>
+						<div class="prototype">
+							<code class="lang-d">
+<span class="kwd">enum</span> <span class="pln">areCompatible</span><span class="pun">(</span><span class="pln">S</span><span class="pun">...)</span> <span class="pun">=</span> <span class="pln">isPeekSource</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">0</span><span class="pun">]) &amp;&amp; </span><span class="pln">isPeekSink</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">1</span><span class="pun">]) || </span><span class="pln">isPullSource</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">0</span><span class="pun">]) &amp;&amp; </span><span class="pln">isPullSink</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">1</span><span class="pun">]) || </span><span class="pln">isAllocSource</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">0</span><span class="pun">]) &amp;&amp; </span><span class="pln">isAllocSink</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">1</span><span class="pun">]) || </span><span class="pln">isPushSource</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">0</span><span class="pun">]) &amp;&amp; </span><span class="pln">isPushSink</span><span class="pun">!(</span><span class="pln">S</span><span class="pun">[</span><span class="lit">1</span><span class="pun">])</span><span class="pun">;</span>
+							</code>
+						</div>
 					</section>
 
 			</section>

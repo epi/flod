@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class="selected module">traits</a>
@@ -63,13 +62,16 @@ $('#symbolSearchPane').show();
 		<div id="main-contents">
 			<h1>Enum member isAllocSink</h1>
 			<section>
-				<p>Returns <code class="prettyprint lang-d">true</code> if <code class="prettyprint lang-d">S</code> is a sink to which data can be written by calling <code class="prettyprint lang-d">alloc()</code> and <code class="prettyprint lang-d">commit()</code>.
+				<p>Returns <code class="lang-d">true</code><code class="lang-d"> if </code><code class="lang-d">S</code><code class="lang-d"> is a sink to which data can be written by calling </code><code class="lang-d">alloc()</code><code class="lang-d"> and </code><code class="lang-d">commit()</code>.
 </p>
 
 					<section>
 						<h3>Declaration</h3>
-						<pre class="code prettyprint lang-d prototype">
-enum isAllocSink(S...) = testStage!(isAllocable, templ, S);</pre>
+						<div class="prototype">
+							<code class="lang-d">
+<span class="kwd">enum</span> <span class="pln">isAllocSink</span><span class="pun">(</span><span class="pln">S</span><span class="pun">...)</span> <span class="pun">=</span> <span class="pln">testStage</span><span class="pun">!(</span><span class="pln">isAllocable</span><span class="pun">, </span><span class="pln">templ</span><span class="pun">, </span><span class="pln">S</span><span class="pun">)</span><span class="pun">;</span>
+							</code>
+						</div>
 					</section>
 
 			</section>

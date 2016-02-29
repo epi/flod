@@ -6,10 +6,9 @@
 		<link rel="stylesheet" type="text/css" href="../../styles/ddox.css"/>
 		<link rel="stylesheet" href="../../prettify/prettify.css" type="text/css"/>
 		<script type="text/javascript" src="../../scripts/jquery.js">/**/</script>
-		<script type="text/javascript" src="../../prettify/prettify.js">/**/</script>
 		<script type="text/javascript" src="../../scripts/ddox.js">/**/</script>
 	</head>
-	<body onload="prettyPrint(); setupDdox();">
+	<body onload="setupDdox();">
 		<nav id="main-nav">
 						<ul class="tree-view">
 							<li class=" tree-view">
@@ -17,6 +16,9 @@
 						<ul class="tree-view">
 							<li>
 								<a href="../../flod/adapter.html" class=" module">adapter</a>
+							</li>
+							<li>
+								<a href="../../flod/buffer.html" class=" module">buffer</a>
 							</li>
 							<li>
 								<a href="../../flod/common.html" class=" module">common</a>
@@ -32,9 +34,6 @@
 							</li>
 							<li>
 								<a href="../../flod/range.html" class=" module">range</a>
-							</li>
-							<li>
-								<a href="../../flod/stream.html" class=" module">stream</a>
 							</li>
 							<li>
 								<a href="../../flod/traits.html" class=" module">traits</a>
@@ -68,28 +67,27 @@ $('#symbolSearchPane').show();
 			</ul>
 			<section>
 				<h2>Function pipe</h2>
-				<p>Start building a new pipeline, adding <code class="prettyprint lang-d">Stage</code> as its source stage.
+				<p>Start building a new pipeline, adding <code class="lang-d">Stage</code> as its source stage.
 </p>
-<section>
-<p>If <code class="prettyprint lang-d">Stage</code> is an active source, the type of its sink is not known at this point and therefore it is not
-constructed immediately. Instead, <code class="prettyprint lang-d"><a href="../../flod/pipeline/pipe.html#args"><code class="prettyprint lang-d">args</code></a></code> are saved and will be used to construct <code class="prettyprint lang-d">Stage!Sink</code> as
-soon as type of <code class="prettyprint lang-d">Sink</code> is known.
+<section><p>If <code class="lang-d">Stage</code> is an active source, the type of its sink is not known at this point and therefore it is not
+constructed immediately. Instead, <code class="lang-d">args</code><code class="lang-d"> are saved and will be used to construct </code><code class="lang-d">Stage!Sink</code> as
+soon as type of <code class="lang-d">Sink</code> is known.
 </p>
-
 </section>
 
 					<section>
-						<h3>Prototypes</h3>
-						<pre class="code prettyprint lang-d prototype">
-auto pipe(alias Stage, Args...)(
-&nbsp;&nbsp;auto ref Args args
-)
-if (!isSink!Stage &amp;&amp; isPassiveSource!Stage);
-
-auto pipe(alias Stage, Args...)(
-&nbsp;&nbsp;auto ref Args args
-)
-if (!isSink!Stage &amp;&amp; isActiveSource!Stage);</pre>
+						<h3>Prototype</h3>
+						<div class="prototype">
+							<code class="lang-d">
+auto <span class="pln">pipe</span><span class="pun">(</span><span class="kwd">alias </span><span class="typ">Stage</span><span class="pun">, </span><span class="typ">Args</span><span class="pun">...)</span><span class="pun">(</span>
+								<br/>
+&nbsp;&nbsp;<span class="kwd">auto ref </span><span class="typ">Args</span> <span class="pln">args</span>
+								<br/>
+<span class="pun">)</span>
+								<br/>
+<span class="kwd">if</span> <span class="pun">(</span><span class="pun">!</span><span class="pln">isSink</span><span class="pun">!</span><span class="typ">Stage </span><span class="pun">&amp;&amp; </span><span class="pln">isSource</span><span class="pun">!</span><span class="typ">Stage</span><span class="pun">);</span>
+							</code>
+						</div>
 					</section>
 <section><h3>Parameters</h3>
 <table><col class="caption"><tr><th>Name</th><th>Description</th></tr>
@@ -101,50 +99,38 @@ if (!isSink!Stage &amp;&amp; isActiveSource!Stage);</pre>
 			</section>
 			<section>
 				<h2>Function pipe</h2>
-				<p>Append <code class="prettyprint lang-d">Stage</code> to <code class="prettyprint lang-d"><a href="../../flod/pipeline/pipe.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a></code>.
+				<p>Append <code class="lang-d">Stage</code><code class="lang-d"> to </code><code class="lang-d"><a href="../../flod/pipeline/pipe.html#pipeline"><code class="lang-d"><span class="pln">pipeline</span></code></a></code>.
 </p>
-<section>
-</section>
+<section></section>
 
 					<section>
-						<h3>Prototypes</h3>
-						<pre class="code prettyprint lang-d prototype">
-auto pipe(alias Stage, Pipeline, string file, int line, Args...)(
-&nbsp;&nbsp;auto ref Pipeline pipeline,
-&nbsp;&nbsp;auto ref Args args
-)
-if (isImmediatePipeline!Pipeline &amp;&amp; isActiveSink!Stage &amp;&amp; !isActiveSource!Stage);
-
-auto pipe(alias Stage, Pipeline, Args...)(
-&nbsp;&nbsp;auto ref Pipeline pipeline,
-&nbsp;&nbsp;auto ref Args args
-)
-if (isImmediatePipeline!Pipeline &amp;&amp; isActiveSink!Stage &amp;&amp; isActiveSource!Stage);
-
-auto pipe(alias Stage, Pipeline, Args...)(
-&nbsp;&nbsp;auto ref Pipeline pipeline,
-&nbsp;&nbsp;auto ref Args args
-)
-if (isDeferredPipeline!Pipeline &amp;&amp; isPassiveSink!Stage &amp;&amp; !isActiveSource!Stage);
-
-auto pipe(alias Stage, Pipeline, Args...)(
-&nbsp;&nbsp;auto ref Pipeline pipeline,
-&nbsp;&nbsp;auto ref Args args
-)
-if (isDeferredPipeline!Pipeline &amp;&amp; isPassiveSink!Stage &amp;&amp; isActiveSource!Stage);</pre>
+						<h3>Prototype</h3>
+						<div class="prototype">
+							<code class="lang-d">
+auto <span class="pln">pipe</span><span class="pun">(</span><span class="kwd">alias </span><span class="typ">Stage</span><span class="pun">, </span><span class="typ">Pipeline</span><span class="pun">, </span><span class="typ">Args</span><span class="pun">...)</span><span class="pun">(</span>
+								<br/>
+&nbsp;&nbsp;<span class="kwd">auto ref </span><span class="typ">Pipeline</span> <span class="pln">pipeline</span><span class="pun">,</span>
+								<br/>
+&nbsp;&nbsp;<span class="kwd">auto ref </span><span class="typ">Args</span> <span class="pln">args</span>
+								<br/>
+<span class="pun">)</span>
+								<br/>
+<span class="kwd">if</span> <span class="pun">(</span><span class="pln">isPipeline</span><span class="pun">!</span><span class="typ">Pipeline </span><span class="pun">&amp;&amp; </span><span class="pln">isSink</span><span class="pun">!</span><span class="typ">Stage</span><span class="pun">);</span>
+							</code>
+						</div>
 					</section>
 <section><h3>Parameters</h3>
 <table><col class="caption"><tr><th>Name</th><th>Description</th></tr>
-<tr><td id="Stage">Stage</td><td> a `struct` or `class` template parameterized by its source type. `Stage` will be
-         instantiated with `Pipeline` as template argument. `Stage` constructor
-         must accept the following order of arguments: `(<a href="../../flod/pipeline/pipe.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a>, <a href="../../flod/pipeline/pipe.html#args"><code class="prettyprint lang-d">args</code></a>)`.</td></tr>
-<tr><td id="pipeline">pipeline</td><td> a <a href="../../flod/pipeline/pipe.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a> ending with a passive (peek/consume or pull) source.</td></tr>
-<tr><td id="args">args</td><td> additional arguments to `Stage` constructor.</td></tr>
+<tr><td id="Stage">Stage</td><td> a <code class="lang-d">struct</code><code class="lang-d"> or </code><code class="lang-d">class</code><code class="lang-d"> template parameterized by its source type. </code><code class="lang-d">Stage</code> will be
+         instantiated with <code class="lang-d">Pipeline</code><code class="lang-d"> as template argument. </code><code class="lang-d">Stage</code> constructor
+         must accept the following order of arguments: <code class="lang-d">(pipeline, args)</code>.</td></tr>
+<tr><td id="pipeline">pipeline</td><td> a <a href="../../flod/pipeline/pipe.html#pipeline"><code class="lang-d"><span class="pln">pipeline</span></code></a> ending with a passive (peek/consume or pull) source.</td></tr>
+<tr><td id="args">args</td><td> additional arguments to <code class="lang-d">Stage</code> constructor.</td></tr>
 </table>
 </section>
 <section><h3>Returns</h3>
-<p><code class="prettyprint lang-d">Stage!Pipeline(<a href="../../flod/pipeline/pipe.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a>, <a href="../../flod/pipeline/pipe.html#args"><code class="prettyprint lang-d">args</code></a>)</code>.
-<code class="prettyprint lang-d"><a href="../../flod/pipeline/pipe.html#pipeline"><code class="prettyprint lang-d">pipeline</code></a></code> is moved if non-copyable.
+<p><code class="lang-d">Stage!Pipeline(pipeline, args)</code>.
+<code class="lang-d">pipeline</code> is moved if non-copyable.
 </p>
 </section>
 
