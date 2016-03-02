@@ -482,6 +482,12 @@ private auto startPipe(alias Stage, Args...)(auto ref Args args)
 		{
 			return Stage!Sink(moveIfNonCopyable(sink), args);
 		}
+
+		auto create(Allocator, Sink)(ref Allocator allocator, auto ref Sink sink)
+		{
+			import std.experimental.allocator : make;
+			return allocator.make!(Stage!Sink)(moveIfNonCopyable(sink), args);
+		}
 	}
 	return SourceDeferredCtor(args);
 }
