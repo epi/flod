@@ -39,13 +39,19 @@ template str(W...) {
 	} else static if (W.length > 1) {
 		enum str = str!(W[0]) ~ "," ~ str!(W[1 .. $]);
 	} else {
-		alias V = W[0];
-		static if (is(typeof(V.str) : string))
-			enum str = V.str;
-		else static if (__traits(compiles, __traits(identifier, V)))
-			enum str = __traits(identifier, V);
-		else
-			enum str = V.stringof;
+		import std.traits : isExpressions;
+		static if (isExpressions!(W[0])) {
+			import std.conv : to;
+			enum str = to!string(W[0]);
+		} else {
+			alias V = W[0];
+			static if (is(typeof(V.str) : string))
+				enum str = V.str;
+			else static if (__traits(compiles, __traits(identifier, V)))
+				enum str = __traits(identifier, V);
+			else
+				enum str = V.stringof;
+		}
 	}
 }
 
@@ -89,14 +95,17 @@ unittest {
 }
 
 /// Forwards to `std.algorithm.move` iff `t` is non-copyable.
-auto moveIfNonCopyable(T)(auto ref T t)
+auto moveIfNonCopyable(T, string file = __FILE__, int line = __LINE__)(auto ref T t)
 {
+	import std.conv : to;
 	static if (isCopyable!T) {
-		debug pragma(msg, "copying ", str!T, " (size=", t.sizeof, ")");
+		debug pragma(msg,
+			file ~ "(" ~ to!string(line) ~ "): copying " ~ str!T ~ " (size=" ~ to!string(t.sizeof) ~ ")");
 		return t;
 	} else {
 		import std.algorithm : move;
-		debug pragma(msg, "moving ", str!T, " (size=", t.sizeof, ")");
+		debug pragma(msg,
+			file ~ "(" ~ to!string(line) ~ "): moving " ~ str!T ~ " (size=" ~ to!string(t.sizeof) ~ ")");
 		return move(t);
 	}
 }
