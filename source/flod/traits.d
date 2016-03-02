@@ -738,3 +738,62 @@ template check(string sinkMethod, string sourceMethod, S...)
 		static assert(0, "not implemented");
 	}
 }
+
+template satisfies(alias Constraint, S...) {
+	enum id = __traits(identifier, Constraint);
+	static assert(id != "Constraint", "Undefined constraint: " ~ Constraint.stringof);
+	enum check = "check" ~ id[2 .. $];
+	enum assert_ = "static assert(" ~ check ~ "!S);";
+	mixin(assert_);
+}
+
+bool checkPushSink(S...)()
+{
+	if (__ctfe) {
+		static if (S.length != 1)
+			return false;
+	} else static if (is(S[0])) {
+		alias P = S[0];
+		P s;
+		static if (is(FixedPushType!P T))
+			size_t result = s.push(new T[1]);
+		else
+			size_t result = s.push(new int[1]);
+		return true;
+	} else {
+
+	}
+	return true;
+}
+
+bool checkPushSource(S...)()
+{
+	if (__ctfe) {
+		static if (S.length != 1)
+			return false;
+	} else static if (is(S[0])) {
+		static assert(0, S[0].stringof ~ " must be a struct template, not a " ~ str!S[0]);
+	} else {
+		alias Templ = S[0];
+		static if (isType!(Templ, DummyPushSink)) {
+			pragma(msg, "instantiates");
+			alias Type = Templ!DummyPushSink;
+			static if (isRunnable!Type) {
+				return true;
+			} else {
+				int a = t.step();
+				t.run();
+				size_t a = t.push(new void[1]);
+				return true;
+			}
+		} else {
+			alias Type = Templ!DummyPushSink;
+			Type t;
+			int a = t.step();
+			t.run();
+			static assert(0, "Failed to instantiate " ~ str!S ~ " with a PushSink");
+			return false;
+		}
+	}
+	return true;
+}
