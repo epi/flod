@@ -49,9 +49,7 @@ private template DefaultPullPeekAdapter(Buffer)
 			auto ready = buffer.peek!T();
 			if (ready.length >= size)
 				return ready;
-			writefln("pull-peek expected %d < available %d", size, ready.length);
 			auto chunk = buffer.alloc!T(size - ready.length);
-			//writefln("pull-peek pull %d", size - ready.length);
 			size_t r = source.pull(chunk);
 			buffer.commit!T(r);
 			return cast(T[]) buffer.peek!T();
@@ -185,81 +183,189 @@ unittest {
 	assert(app.data == iota(0, 1048576).array());
 }
 
-version(FlodBloat):
-
-class PushPull(Sink)
-{
-	import core.thread;
-
-	private {
-		Sink sink;
-		ubyte[] buffer;
-		size_t peekOffset;
-		size_t readOffset;
-		void[__traits(classInstanceSize, Fiber)] fiberBuf;
-
-		final @property Fiber sinkFiber() pure
-		{
-			return cast(Fiber) cast(void*) fiberBuf;
-		}
+@satisfies!(isPushSink, YieldingPushSink)
+private struct YieldingPushSink {
+	const(void)[] pushed;
+	private void stop() {
+		pushed = (cast(const(void)*) null)[0xdead .. 0xdeaf];
+		assert(pushed !is null);
 	}
 
-	this() @trusted
+	private void more() { pushed = null; }
+
+	size_t push(T)(const(T)[] buf)
 	{
-		import std.conv : emplace;
-		emplace!Fiber(fiberBuf[], &this.fiberFunc);
+		import core.thread : Fiber;
+		if (pushed !is null)
+			return 0;
+		pushed = cast(const(void)[]) buf;
+		Fiber.yield();
+		return buf.length;
+	}
+}
+
+private struct DefaultPushPullAdapter(Source, Buffer) {
+	import core.thread : Fiber;
+	import flod.meta : NonCopyable, moveIfNonCopyable;
+
+	Source source;
+	Buffer buffer;
+	Fiber fiber;
+
+	this()(auto ref Source source, auto ref Buffer buffer) {
+		this.source = moveIfNonCopyable(source);
+		this.buffer = moveIfNonCopyable(buffer);
 	}
 
-	~this() @trusted
-	{
-		sinkFiber.__dtor();
-	}
-
-	private final void fiberFunc()
-	{
-		stderr.writefln("this in fiberFunc %d %d", peekOffset, readOffset);
-		sink.pull();
-	}
-
-	// push sink interface
-	size_t push(const(ubyte[]) data)
-	{
-		stderr.writefln("push %d bytes", data.length);
-		if (readOffset + data.length > buffer.length)
-			buffer.length = readOffset + data.length;
-		buffer[readOffset .. readOffset + data.length] = data[];
-		readOffset += data.length;
-		stderr.writefln("%d bytes available", readOffset);
-		sinkFiber.call();
-		return data.length;
-	}
-
-	// TODO: alloc+commit
-
-	// pull source interface
-	const(ubyte)[] peek(size_t size)
-	{
-		stderr.writefln("peek %d, po %d, ro %d, available %d", size, peekOffset, readOffset, readOffset - peekOffset);
-		while (peekOffset + size > readOffset)
-			Fiber.yield();
-		return buffer[peekOffset .. $];
-	}
-
-	void consume(size_t size)
-	{
-		peekOffset += size;
-		if (peekOffset == readOffset) {
-			peekOffset = 0;
-			readOffset = 0;
-		}
-	}
-
-	void pull(ubyte[] outbuf)
+	private T[] pullFromBuffer(T)(T[] dest)
 	{
 		import std.algorithm : min;
-		auto inbuf = peek(outbuf.length);
-		auto l = min(inbuf.length, outbuf.length);
-		outbuf[0 .. l] = inbuf[0 .. l];
-		consume(l);
+		auto src = buffer.peek!T();
+		auto len = min(src.length, dest.length);
+		if (len > 0) {
+			dest[0 .. len] = src[0 .. len];
+			buffer.consume!T(len);
+			return dest[len .. $];
+		}
+		return dest;
 	}
+
+	// FIXME: unsafe, type information is lost between push and pull
+	size_t pull(T)(T[] dest)
+	{
+		size_t requestedLength = dest.length;
+		// first, give off whatever was left from this.pushed on previous pull();
+		dest = pullFromBuffer(dest);
+		if (dest.length == 0)
+			return requestedLength;
+		// if not satisfied yet, switch to source fiber till push() is called again
+		// enough times to fill dest[]
+		auto untyped = cast(void[]) dest;
+		const(void)[] pushed;
+		do {
+			import std.algorithm : min;
+			if (fiber is null) {
+				// TODO: fiber is created here, and not in ctor, because the delegate context ptr
+				// would point into the old location (possibly garbage) and it will
+				// fail if "this" is moved or copied :/
+				fiber = new Fiber(&source.run);
+			}
+			assert(fiber.state == Fiber.State.HOLD);
+			source.sink.more();
+			fiber.call();
+			if (fiber.state == Fiber.State.TERM) {
+				fiber = null;
+				break;
+			}
+			pushed = source.sink.pushed;
+
+			// pushed is the slice of the original buffer passed to push() by the source.
+			auto len = min(pushed.length, untyped.length);
+			assert(len > 0);
+			untyped.ptr[0 .. len] = pushed[0 .. len];
+			untyped = untyped[len .. $];
+			pushed = pushed[len .. $];
+		} while (untyped.length > 0);
+
+		// whatever's left in pushed, keep it in buffer for the next time pull() is called
+		while (pushed.length > 0) {
+			import std.algorithm : min;
+			auto b = buffer.alloc!void(pushed.length);
+			if (b.length == 0) {
+				import core.exception : OutOfMemoryError;
+				throw new OutOfMemoryError();
+			}
+			auto len = (b.length, pushed.length);
+			b[0 .. len] = pushed[0 .. len];
+			buffer.commit!void(len);
+			pushed = pushed[len .. $];
+		}
+		return requestedLength - untyped.length / T.sizeof;
+	}
+
+	~this()
+	{
+		if (fiber) {
+			source.sink.stop;
+			fiber.call();
+			assert(fiber !is null);
+			assert(fiber.state == Fiber.State.TERM);
+			fiber = null;
+		}
+	}
+}
+
+///
+auto pushPull(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+{
+	alias SP = typeof(pipeline.pipe!YieldingPushSink);
+	alias PP = DefaultPushPullAdapter!(SP, Buffer);
+	return PP(pipeline.pipe!YieldingPushSink, buffer);
+}
+
+///
+auto pushPull(Pipeline)(auto ref Pipeline pipeline)
+{
+	import flod.buffer : movingBuffer;
+	return pipeline.pushPull(movingBuffer());
+}
+
+import flod.meta;
+
+unittest {
+	@satisfies!(isPushSource, ArraySource)
+	static struct ArraySource(Sink) {
+		mixin NonCopyable;
+		int[] array;
+		int counter = 1;
+
+		private this(int[] arr) { array = arr; }
+		Sink sink;
+
+		this(Args...)(auto ref Sink sink, auto ref Args args)
+		{
+			this.sink = moveIfNonCopyable(sink);
+			this(args);
+		}
+
+		void run()
+		{
+			while (array.length) {
+				import std.algorithm : min;
+				auto l = min(array.length, counter);
+				assert(l);
+				if (l != sink.push(array[0 .. l]))
+					break;
+				array = array[l .. $];
+				++counter;
+			}
+		}
+	}
+	static assert(!isCopyable!(ArraySource!YieldingPushSink));
+
+	import std.range : iota, array;
+	import flod.buffer;
+
+	auto arr = iota(0, 1048576).array();
+	int[] result;
+	auto buffer = movingBuffer();
+	auto pushsource = pipe!ArraySource(arr.dup);
+	auto pushpipeline = pushsource.create(YieldingPushSink());
+	auto pullsource = DefaultPushPullAdapter!(typeof(pushpipeline), typeof(buffer))(pushpipeline, buffer);
+	auto n = 100;
+	result.length = n;
+	assert(pullsource.pull(result) == n);
+	assert(result[0 .. n] == arr[0 .. n]);
+	arr = arr[n .. $];
+
+	n = 1337;
+	result.length = n;
+	assert(pullsource.pull(result) == n);
+	assert(result[0 .. n] == arr[0 .. n]);
+	arr = arr[n .. $];
+
+	n = 4000000;
+	result.length = n;
+	assert(pullsource.pull(result) == arr.length);
+	assert(result[0 .. arr.length] == arr[0 .. arr.length]);
 }
