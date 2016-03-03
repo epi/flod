@@ -1,7 +1,7 @@
 # flod
 
 *flod* is a D library for composing stream processing pipelines.
-API documentation is available [here](http://epi.github.io/flod/docs/flod.html).
+API documentation is available [here](http://epi.github.io/flod/ddox/flod.html).
 
 ## 3rd party packages
 
