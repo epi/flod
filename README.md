@@ -1,3 +1,4 @@
+![Travis-CI badge](https://travis-ci.org/epi/flod.svg?branch=master)
 # flod
 
 *flod* is a D library for composing stream processing pipelines.
