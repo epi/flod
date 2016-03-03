@@ -529,12 +529,14 @@ auto pipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref A
 
 auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
 	if (isImmediatePipeline!Pipeline && isActiveSink!Stage && !isActiveSource!Stage)
+/* TODO: ldc2-1.0.0-alpha1 doesn't like it
 out(result)
 {
 	import std.traits : Unqual;
 	alias P = Unqual!(typeof(result));
 	static assert(isImmediatePipeline!P || isRunnable!P || isInputRange!P);
 }
+*/
 body
 {
 	debug alias X = whatIsAppended!(Pipeline, Stage);
