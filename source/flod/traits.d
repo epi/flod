@@ -789,9 +789,7 @@ bool checkPushSource(S...)()
 		} else {
 			alias Type = Templ!DummyPushSink;
 			Type t;
-			int a = t.step();
 			t.run();
-			static assert(0, "Failed to instantiate " ~ str!S ~ " with a PushSink");
 			return false;
 		}
 	}
