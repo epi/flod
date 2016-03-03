@@ -717,3 +717,21 @@ unittest {
 	cast(void) pipe!TestPeekSource.pipe!TestPushSink.run();
 	cast(void) pipe!TestPeekSource.pipe!TestPushFilter.pipe!TestPushSink.run();
 }
+
+private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
+	if (isDeferredPipeline!Pipeline && isActiveSink!Stage)
+{
+	debug alias X = whatIsAppended!(Pipeline, Stage);
+	static if (isPushPipeline!Pipeline && isPullSink!Stage) {
+		debug pragma(msg, "Inserting implicit push-pull adapter");
+		import flod.adapter : pushPull;
+		return pipeline.pushPull.appendPipe!Stage(args);
+	} else static if (isPushPipeline!Pipeline && isPeekSink!Stage) {
+		// TODO: use a direct adapter
+		debug pragma(msg, "Inserting implicit push-peek adapter");
+		import flod.adapter : pushPull, pullPeek;
+		return pipeline.pushPull.pullPeek.appendPipe!Stage(args);
+	} else {
+		static assert(0, "not implemented");
+	}
+}
