@@ -51,7 +51,7 @@ template isAllocPipeline(P) {
 		static if (is(typeof({
 						static struct AllocSink {
 							auto alloc(T = ubyte)(size_t n) { return new T[n]; }
-							void commit(size_t) {}
+							void commit(size_t) {} // TODO: commit returns size_t
 						}
 						P p;
 						return p.create(AllocSink());
@@ -205,6 +205,7 @@ Filters:
 	}
 	static assert(isPeekSource!TestPeekSource && !isSink!TestPeekSource);
 
+	@satisfies!(isPushSource, TestPushSource)
 	struct TestPushSource(Sink) {
 		mixin NonCopyable;
 
@@ -212,27 +213,31 @@ Filters:
 		ulong dummy;
 		const(ubyte)[] blob;
 
-		int step()()
+		void run()()
 		{
-			return sink.push(blob) != blob.length;
+			while (sink.push(blob) == blob.length) {}
 		}
 	}
-	static assert(isPushSource!TestPushSource && !isSink!TestPushSource);
+	static assert(!isSink!TestPushSource);
 
+	@satisfies!(isAllocSource, TestAllocSource)
 	struct TestAllocSource(Sink) {
 		Sink sink;
 		string dummy;
 		ulong unused;
 
-		int step()()
+		void run()()
 		{
-			auto buf = sink.alloc(15);
-			buf[] = typeof(buf[0]).init;
-			sink.commit(buf.length);
-			return buf.length != 15;
+			for (;;) {
+				auto buf = sink.alloc(15);
+				buf[] = typeof(buf[0]).init;
+				sink.commit(buf.length); // TODO: commit returns size_t
+				if (buf.length != 15)
+					break;
+			}
 		}
 	}
-	static assert(isAllocSource!TestAllocSource && !isSink!TestAllocSource);
+	static assert(!isSink!TestAllocSource);
 
 	// sinks:
 
@@ -240,25 +245,23 @@ Filters:
 		Source src;
 		int a;
 
-		int run()
+		void run()
 		{
 			auto buf = new int[a];
 			foreach (i; 1 .. 10) {
 				if (src.pull(buf) != buf.length)
-					return 1;
+					break;
 			}
-			return 0;
 		}
 	}
 	static assert(isPullSink!TestPullSink && !isSource!TestPullSink);
 
 	struct TestPeekSink(Source) {
 		Source s;
-		int step()
+		void run()
 		{
 			auto buf = s.peek(10);
 			s.consume(buf.length);
-			return 1;
 		}
 	}
 	static assert(isPeekSink!TestPeekSink && !isSource!TestPeekSink);
@@ -270,7 +273,7 @@ Filters:
 
 	struct TestAllocSink {
 		auto alloc(T = ubyte)(size_t n) { return new T[n - 1]; }
-		void commit(T = ubyte)(size_t n) {}
+		void commit(T = ubyte)(size_t n) {} // TODO: commit returns size_t
 	}
 	static assert(isAllocSink!TestAllocSink);
 	static assert(!isSource!TestAllocSink);
@@ -295,11 +298,14 @@ Filters:
 		Source source;
 		Sink sink;
 
-		int step()
+		void run()
 		{
 			ubyte[4096] buf;
-			auto n = source.pull(buf);
-			return sink.push(buf[0 .. n]) != buf.length;
+			for (;;) {
+				auto n = source.pull(buf);
+				if (sink.push(buf[0 .. n]) != buf.length)
+					break;
+			}
 		}
 	}
 	static assert(isPullSink!TestPullPushFilter);
@@ -310,11 +316,11 @@ Filters:
 		Source source;
 		Sink sink;
 
-		int step()
+		void run()
 		{
-			auto buf = source.alloc(4096);
+			auto buf = sink.alloc(4096);
 			auto n = source.pull(buf);
-			return sink.push(buf[0 .. n]) != buf.length;
+			source.commit(n); // TODO: commit returns size_t
 		}
 	}
 
@@ -352,14 +358,17 @@ Filters:
 		Source source;
 		Sink sink;
 
-		int step()
+		void run()
 		{
-			auto nb = source.peek(4096);
-			if (nb.length == 0)
-				return 1;
-			auto w = sink.push(nb);
-			source.consume(w);
-			return w < nb.length;
+			for (;;) {
+				auto nb = source.peek(4096);
+				if (nb.length == 0)
+					break;
+				auto w = sink.push(nb);
+				source.consume(w);
+				if (w < nb.length)
+					break;
+			}
 		}
 	}
 	static assert(isPeekSink!TestPeekPushFilter);
@@ -429,19 +438,6 @@ private template whatIsAppended(P, alias S, string file = __FILE__) {
 }
 
 /**
-Run a `pipeline` by repeatedly calling `pipeline.step`.
-*/
-int run(Pipeline)(auto ref Pipeline pipeline)
-	if (isRunnable!Pipeline)
-{
-	for (;;) {
-		int r = pipeline.step();
-		if (r != 0)
-			return r;
-	}
-}
-
-/**
 Start building a new pipeline, adding `Stage` as its source _stage.
 
 If `Stage` is an active source, the type of its sink is not known at this point and therefore it is not
@@ -495,8 +491,8 @@ private auto startPipe(alias Stage, Args...)(auto ref Args args)
 unittest {
 	auto p1 = pipe!TestPushSource(0xdeadUL);
 	static assert(isPushPipeline!(typeof(p1)));
-	assert(p1.create(TestPushSink()).run() == 1);
-	assert(pipe!TestAllocSource("test", 0UL).create(TestAllocSink()).run() == 1);
+	p1.create(TestPushSink()).run();
+	pipe!TestAllocSource("test", 0UL).create(TestAllocSink()).run();
 }
 
 /**
@@ -560,23 +556,23 @@ body
 
 unittest {
 	import flod.adapter;
-	assert(pipe!TestPeekSource().pipe!TestPeekSink.run() == 1);
-	assert(pipe!TestPeekSource().pipe!TestPeekFilter.pipe!TestPeekSink.run() == 1);
-	assert(pipe!TestPullSource().pipe!TestPullSink(31337).run() == 0);
-	assert(pipe!TestPullSource().pipe!TestPullFilter.pipe!TestPullSink(31337).run() == 0);
-	assert(pipe!TestPullSource().pipe!TestPullFilter.pipe!TestPullFilter.pipe!TestPullFilter
-		.pipe!TestPullSink(31337).run() == 0);
-	assert(pipe!TestPullSource()
+	pipe!TestPeekSource().pipe!TestPeekSink.run();
+	pipe!TestPeekSource().pipe!TestPeekFilter.pipe!TestPeekSink.run();
+	pipe!TestPullSource().pipe!TestPullSink(31337).run();
+	pipe!TestPullSource().pipe!TestPullFilter.pipe!TestPullSink(31337).run();
+	pipe!TestPullSource().pipe!TestPullFilter.pipe!TestPullFilter.pipe!TestPullFilter
+		.pipe!TestPullSink(31337).run();
+	pipe!TestPullSource()
 		.pipe!TestPullFilter
 		.pipe!TestPullPeekFilter
 		.pipe!TestPeekFilter
-		.pipe!TestPeekSink.run() == 1);
-	assert(pipe!TestPeekSource()
+		.pipe!TestPeekSink.run();
+	pipe!TestPeekSource()
 		.pipe!TestPeekFilter
 		.pipe!TestPeekPullFilter
 		.pipe!TestPullFilter
-		.pipe!TestPullSink.run() == 0);
-	assert(pipe!TestPeekSource()
+		.pipe!TestPullSink.run();
+	pipe!TestPeekSource()
 		.pipe!TestPeekFilter
 		.pipe!TestPeekPullFilter
 		.pipe!TestPullFilter
@@ -584,36 +580,36 @@ unittest {
 		.pipe!TestPullPeekFilter
 		.pipe!TestPeekFilter
 		.pipe!TestPeekFilter
-		.pipe!TestPeekSink.run() == 1);
+		.pipe!TestPeekSink.run();
 	// with implicit adapters
-	assert(pipe!TestPullSource()
-		.pipe!TestPeekSink().run() == 1);
-	assert(pipe!TestPullSource()
+	pipe!TestPullSource()
+		.pipe!TestPeekSink().run();
+	pipe!TestPullSource()
 		.pipe!TestPeekPullFilter
 		.pipe!TestPeekPullFilter
-		.pipe!TestPeekSink().run() == 1);
-	assert(pipe!TestPullSource()
+		.pipe!TestPeekSink().run();
+	pipe!TestPullSource()
 		.pipe!TestPullFilter
 		.pipe!TestPeekFilter
-		.pipe!TestPeekSink().run() == 1);
-	assert(pipe!TestPeekSource()
-		.pipe!TestPullSink().run() == 0);
-	assert(pipe!TestPeekSource()
+		.pipe!TestPeekSink().run();
+	pipe!TestPeekSource()
+		.pipe!TestPullSink().run();
+	pipe!TestPeekSource()
 		.pipe!TestPullPeekFilter
 		.pipe!TestPullPeekFilter
-		.pipe!TestPullSink().run() == 0);
-	assert(pipe!TestPeekSource()
+		.pipe!TestPullSink().run();
+	pipe!TestPeekSource()
 		.pipe!TestPeekFilter
 		.pipe!TestPullFilter
-		.pipe!TestPullSink().run() == 0);
-	assert(pipe!TestPeekSource()
+		.pipe!TestPullSink().run();
+	pipe!TestPeekSource()
 		.pipe!TestPeekFilter
 		.pipe!TestPullFilter
 		.pipe!TestPeekFilter
 		.pipe!TestPullFilter
 		.pipe!TestPeekFilter
 		.pipe!TestPullFilter
-		.pipe!TestPullSink().run() == 0);
+		.pipe!TestPullSink().run();
 }
 
 private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeline, auto ref Args args)
@@ -676,7 +672,7 @@ unittest {
 	auto p2 = p1.pipe!TestPullPushFilter;
 	static assert(isPushPipeline!(typeof(p2)));
 	auto p3 = p2.pipe!TestPushSink;
-	assert(p3.run() == 1);
+	p3.run();
 }
 
 unittest {
@@ -725,6 +721,10 @@ private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeli
 	static if (isPushPipeline!Pipeline && isPullSink!Stage) {
 		debug pragma(msg, "Inserting implicit push-pull adapter");
 		import flod.adapter : pushPull;
+		auto pp = pipeline.pushPull;
+		ubyte[] buf;
+		pp.pull(buf);
+		static assert(isPullPipeline!(typeof(pp)));
 		return pipeline.pushPull.appendPipe!Stage(args);
 	} else static if (isPushPipeline!Pipeline && isPeekSink!Stage) {
 		// TODO: use a direct adapter
@@ -732,6 +732,14 @@ private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeli
 		import flod.adapter : pushPull, pullPeek;
 		return pipeline.pushPull.pullPeek.appendPipe!Stage(args);
 	} else {
-		static assert(0, "not implemented");
+		//static assert(0, "not implemented");
 	}
+}
+
+unittest {
+	// push -> pull
+	auto pp = pipe!TestPushSource;
+	static assert(isDeferredPipeline!(typeof(pp)));
+	static assert(isActiveSink!TestPullSink);
+	pp.pipe!TestPullSink.run();
 }

@@ -119,14 +119,17 @@ struct DefaultPullPushAdapter(Source, Sink) {
 	size_t chunkSize;
 
 public:
-	int step()()
+	void run()()
 	{
 		import core.stdc.stdlib : alloca;
 		auto buf = (cast(T*) alloca(T.sizeof * chunkSize))[0 .. chunkSize];
-		size_t inp = source.pull(buf[]);
-		if (inp == 0)
-			return 1;
-		return sink.push(buf[0 .. inp]) < chunkSize;
+		for (;;) {
+			size_t inp = source.pull(buf[]);
+			if (inp == 0)
+				break;
+			if (sink.push(buf[0 .. inp]) < chunkSize)
+				break;
+		}
 	}
 }
 static assert(isPullSink!DefaultPullPushAdapter);
@@ -150,14 +153,17 @@ private:
 	size_t chunkSize;
 
 public:
-	int step()()
+	void run()()
 	{
-		auto buf = source.peek!T(chunkSize);
-		if (buf.length == 0)
-			return 1;
-		size_t w = sink.push(buf[]);
-		source.consume(w);
-		return w < chunkSize;
+		for (;;) {
+			auto buf = source.peek!T(chunkSize);
+			if (buf.length == 0)
+				break;
+			size_t w = sink.push(buf[]);
+			if (w < chunkSize)
+				break;
+			source.consume(w);
+		}
 	}
 }
 static assert(isPeekSink!DefaultPeekPushAdapter);
@@ -177,7 +183,7 @@ auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = size_t.si
 unittest {
 	import std.array : appender;
 	import std.range : iota, array;
-	import flod.pipeline : toOutputRange, run;
+	import flod.pipeline : toOutputRange;
 	auto app = appender!(uint[]);
 	iota(0, 1048576).array().peekPush().toOutputRange(app).run();
 	assert(app.data == iota(0, 1048576).array());
@@ -199,7 +205,8 @@ private struct YieldingPushSink {
 		if (pushed !is null)
 			return 0;
 		pushed = cast(const(void)[]) buf;
-		Fiber.yield();
+		if (!__ctfe) // hack
+			Fiber.yield();
 		return buf.length;
 	}
 }
@@ -230,6 +237,11 @@ private struct DefaultPushPullAdapter(Source, Buffer) {
 		return dest;
 	}
 
+	private void runSource()
+	{
+		source.run();
+	}
+
 	// FIXME: unsafe, type information is lost between push and pull
 	size_t pull(T)(T[] dest)
 	{
@@ -248,7 +260,7 @@ private struct DefaultPushPullAdapter(Source, Buffer) {
 				// TODO: fiber is created here, and not in ctor, because the delegate context ptr
 				// would point into the old location (possibly garbage) and it will
 				// fail if "this" is moved or copied :/
-				fiber = new Fiber(&source.run);
+				fiber = new Fiber(&this.runSource);
 			}
 			assert(fiber.state == Fiber.State.HOLD);
 			source.sink.more();

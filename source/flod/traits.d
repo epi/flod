@@ -70,28 +70,16 @@ private template WriteBufferType(alias buf) {
 		}());
 }
 
-template hasRun(S) {
-	enum bool hasRun = __traits(compiles,
-		{
-			S x;
-			x.run();
-		}());
-}
-
-template hasStep(S) {
-	enum bool hasStep = __traits(compiles,
-		{
-			S x;
-			while (x.step() == 0) {}
-		});
-}
-
 // Defines a unique POD struct type
 private struct SomePOD(string cookie = __FILE__ ~ ":" ~ __LINE__.stringof) { string meaningless = cookie; }
 
 ///
 template isRunnable(P) {
-	enum bool isRunnable = hasRun!P || hasStep!P;
+	enum bool isRunnable = __traits(compiles,
+		{
+			P x;
+			x.run();
+		}());
 }
 
 private template PushElementType(S, Args...) {
@@ -384,18 +372,6 @@ unittest {
 }
 
 unittest {
-	static struct NullSource(Sink) {
-		Sink sink;
-		bool step() {
-			ubyte[] buf;
-			sink.push(buf);
-			return false;
-		}
-	}
-	static assert(isPushSource!NullSource);
-}
-
-unittest {
 	static struct Forward(Sink) {
 		Sink sink;
 		auto push(T)(const(T)[] buf) {
@@ -445,7 +421,6 @@ unittest {
 	static struct NotASource(Sink) {
 		Sink sink;
 		void run()() {}
-		bool step()() { return false; }
 		size_t push(T = ubyte)(const(T)[] buf) { return buf.length; }
 		size_t push(const(ulong)[] buf) { return buf.length; }
 	}
@@ -579,12 +554,11 @@ template isPullSink(S...) {
 unittest {
 	struct PullSink(Source) {
 		Source source;
-		bool step()()
+		void run()()
 		{
 			struct A { bool foo; }
 			auto buf = new A[100];
 			auto n = source.pull(buf);
-			return false;
 		}
 	}
 	static assert(isPullSink!PullSink);
@@ -749,49 +723,77 @@ template satisfies(alias Constraint, S...) {
 
 bool checkPushSink(S...)()
 {
-	if (__ctfe) {
-		static if (S.length != 1)
-			return false;
-	} else static if (is(S[0])) {
-		alias P = S[0];
-		P s;
-		static if (is(FixedPushType!P T))
-			size_t result = s.push(new T[1]);
-		else
-			size_t result = s.push(new int[1]);
+	if (!__ctfe) {
 		return true;
 	} else {
-
+		static if (S.length != 1) {
+			return false;
+		} else static if (is(S[0])) {
+			alias P = S[0];
+			P s;
+			static if (is(FixedPushType!P T))
+				size_t result = s.push(new T[1]);
+			else
+				size_t result = s.push(new int[1]);
+			return true;
+		} else {
+			return false;
+		}
 	}
-	return true;
 }
 
 bool checkPushSource(S...)()
 {
-	if (__ctfe) {
-		static if (S.length != 1)
-			return false;
-	} else static if (is(S[0])) {
-		static assert(0, S[0].stringof ~ " must be a struct template, not a " ~ str!S[0]);
+	if (!__ctfe) {
+		return true;
 	} else {
-		alias Templ = S[0];
-		static if (isType!(Templ, DummyPushSink)) {
-			pragma(msg, "instantiates");
-			alias Type = Templ!DummyPushSink;
-			static if (isRunnable!Type) {
-				return true;
-			} else {
-				int a = t.step();
-				t.run();
-				size_t a = t.push(new void[1]);
-				return true;
-			}
-		} else {
-			alias Type = Templ!DummyPushSink;
-			Type t;
-			t.run();
+		static if (S.length != 1) {
 			return false;
+		} else static if (is(S[0])) {
+			static assert(0, S[0].stringof ~ " must be a struct template, not a " ~ str!S[0]);
+		} else {
+			alias Templ = S[0];
+			static if (isType!(Templ, DummyPushSink)) {
+				alias Type = Templ!DummyPushSink;
+				static if (isRunnable!Type) {
+					return true;
+				} else if (isPushable!Type) {
+					return true;
+				} else if (isAllocable!Type) {
+					return true;
+				} else {
+					Type t;
+					t.run();
+					size_t a = t.push(new void[1]);
+					return true;
+				}
+			} else {
+				alias Type = Templ!DummyPushSink;
+				Type t;
+				t.run();
+				return false;
+			}
 		}
 	}
-	return true;
+}
+
+bool checkAllocSource(S...)()
+{
+	if (!__ctfe) {
+		return true;
+	} else {
+		assert(S.length == 1);
+		assert(__traits(isTemplate, S[0]));
+		alias Templ = S[0];
+		assert(isType!(Templ, DummyAllocSink));
+		alias Type = Templ!DummyAllocSink;
+		Type t;
+		static if (isRunnable!Type || isPushable!Type || isAllocable!Type) {
+			return true;
+		} else {
+			t.run();
+			t.alloc(15);
+			t.push();
+		}
+	}
 }

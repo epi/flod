@@ -88,6 +88,6 @@ auto toFile(Pipeline)(auto ref Pipeline pipeline, File file)
 unittest
 {
 	import flod.adapter : pullPush;
-	auto s = fromFile(File("/etc/passwd"))
+	fromFile(File("/etc/passwd"))
 		.pullPush(65536).toFile(File("dupa", "wb")).run();
 }
