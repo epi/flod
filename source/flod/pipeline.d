@@ -188,6 +188,7 @@ Filters:
 
 	// sources:
 
+	@implements!(PullSource, TestPullSource)
 	struct TestPullSource {
 		size_t pull(T)(T[] buf)
 		{
@@ -199,13 +200,14 @@ Filters:
 	static assert(!isSink!TestPullSource);
 	static assert(!is(DefaultPullType!TestPullSource));
 
+	@implements!(PeekSource, TestPeekSource)
 	static struct TestPeekSource {
 		const(T)[] peek(T = ubyte)(size_t n) { return new T[n]; }
 		void consume(T = ubyte)(size_t n) {}
 	}
 	static assert(isPeekSource!TestPeekSource && !isSink!TestPeekSource);
 
-	@satisfies!(isPushSource, TestPushSource)
+	@implements!(PushSource, TestPushSource)
 	struct TestPushSource(Sink) {
 		mixin NonCopyable;
 
@@ -220,7 +222,7 @@ Filters:
 	}
 	static assert(!isSink!TestPushSource);
 
-	@satisfies!(isAllocSource, TestAllocSource)
+	@implements!(AllocSource, TestAllocSource)
 	struct TestAllocSource(Sink) {
 		Sink sink;
 		string dummy;
@@ -241,6 +243,7 @@ Filters:
 
 	// sinks:
 
+	@implements!(PullSink, TestPullSink)
 	struct TestPullSink(Source) {
 		Source src;
 		int a;
@@ -256,6 +259,7 @@ Filters:
 	}
 	static assert(isPullSink!TestPullSink && !isSource!TestPullSink);
 
+	@implements!(PeekSink, TestPeekSink)
 	struct TestPeekSink(Source) {
 		Source s;
 		void run()
@@ -266,11 +270,13 @@ Filters:
 	}
 	static assert(isPeekSink!TestPeekSink && !isSource!TestPeekSink);
 
+	@implements!(PushSink, TestPushSink)
 	struct TestPushSink {
 		size_t push(T)(const(T)[] buf) { return buf.length - 1; }
 	}
 	static assert(isPushSink!TestPushSink && !isSource!TestPushSink);
 
+	@implements!(AllocSink, TestAllocSink)
 	struct TestAllocSink {
 		auto alloc(T = ubyte)(size_t n) { return new T[n - 1]; }
 		void commit(T = ubyte)(size_t n) {} // TODO: commit returns size_t
@@ -280,12 +286,14 @@ Filters:
 
 	// filters:
 
+	@implements!(PullSink, PullSource, TestPullFilter)
 	struct TestPullFilter(Source) {
 		Source source;
 		size_t pull(T)(T[] buf) { return source.pull(buf); }
 	}
 	static assert(isPullSink!TestPullFilter && isPullSource!TestPullFilter);
 
+	@implements!(PeekSink, PeekSource, TestPeekFilter)
 	struct TestPullPeekFilter(Source) {
 		Source s;
 		const(T)[] peek(T = ubyte)(size_t n) { auto buf = new T[n]; s.pull(buf); return buf; }
@@ -293,6 +301,7 @@ Filters:
 	}
 	static assert(isPullSink!TestPullPeekFilter && isPeekSource!TestPullPeekFilter);
 
+	@implements!(PullSink, PushSource, TestPullPushFilter)
 	struct TestPullPushFilter(Source, Sink) {
 		mixin NonCopyable;
 		Source source;
@@ -311,6 +320,7 @@ Filters:
 	static assert(isPullSink!TestPullPushFilter);
 	static assert(isPushSource!TestPullPushFilter);
 
+	@implements!(PullSink, AllocSource, TestPullAllocFilter)
 	struct TestPullAllocFilter(Source, Sink) {
 		mixin NonCopyable;
 		Source source;
@@ -320,10 +330,11 @@ Filters:
 		{
 			auto buf = sink.alloc(4096);
 			auto n = source.pull(buf);
-			source.commit(n); // TODO: commit returns size_t
+			sink.commit(n); // TODO: commit returns size_t
 		}
 	}
 
+	@implements!(PeekSink, PeekSource, TestPeekFilter)
 	struct TestPeekFilter(Source) {
 		Source s;
 		static if (is(FixedPeekType!Source U)) {
@@ -341,6 +352,7 @@ Filters:
 	static assert(isPeekSink!TestPeekFilter);
 	static assert(isPeekSource!TestPeekFilter);
 
+	@implements!(PeekSink, PullSource, TestPeekPullFilter)
 	struct TestPeekPullFilter(Source) {
 		Source source;
 		size_t pull(T)(T[] buf)
@@ -353,6 +365,7 @@ Filters:
 	}
 	static assert(isPeekSink!TestPeekPullFilter && isPullSource!TestPeekPullFilter);
 
+	@implements!(PeekSink, PushSource, TestPeekPushFilter)
 	struct TestPeekPushFilter(Source, Sink) {
 		mixin NonCopyable;
 		Source source;

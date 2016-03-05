@@ -25,6 +25,7 @@ template isPullable(Source, ElementType) {
 
 private template DefaultPullPeekAdapter(Buffer)
 {
+	@implements!(PullSink, PeekSource, DefaultPullPeekAdapter)
 	struct DefaultPullPeekAdapter(Source) {
 	private:
 		import std.stdio;
@@ -83,7 +84,7 @@ auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	return pipeline.pullPeek(mmappedBuffer());
 }
 
-
+@implements!(PeekSink, PullSource, DefaultPeekPullAdapter)
 struct DefaultPeekPullAdapter(Source) {
 private:
 	Source source;
@@ -109,9 +110,8 @@ public:
 static assert(isPullSource!DefaultPeekPullAdapter);
 static assert(isPeekSink!DefaultPeekPullAdapter);
 
-
+@implements!(PeekSink, PushSource, DefaultPeekPushAdapter)
 struct DefaultPullPushAdapter(Source, Sink) {
-	pragma(msg, "instantiating with ", str!Source, ",", str!Sink);
 //private:
 	alias T = CommonType!(Source, Sink, ubyte);
 	Source source;
@@ -189,7 +189,7 @@ unittest {
 	assert(app.data == iota(0, 1048576).array());
 }
 
-@satisfies!(isPushSink, YieldingPushSink)
+@implements!(PushSink, YieldingPushSink)
 private struct YieldingPushSink {
 	const(void)[] pushed;
 	private void stop() {
@@ -212,6 +212,8 @@ private struct YieldingPushSink {
 }
 
 private struct DefaultPushPullAdapter(Source, Buffer) {
+	enum _ok = implements!(PullSource, DefaultPushPullAdapter);
+
 	import core.thread : Fiber;
 	import flod.meta : NonCopyable, moveIfNonCopyable;
 
@@ -325,7 +327,6 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 import flod.meta;
 
 unittest {
-	@satisfies!(isPushSource, ArraySource)
 	static struct ArraySource(Sink) {
 		mixin NonCopyable;
 		int[] array;

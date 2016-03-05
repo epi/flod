@@ -74,12 +74,25 @@ private template WriteBufferType(alias buf) {
 private struct SomePOD(string cookie = __FILE__ ~ ":" ~ __LINE__.stringof) { string meaningless = cookie; }
 
 ///
-template isRunnable(P) {
-	enum bool isRunnable = __traits(compiles,
-		{
-			P x;
-			x.run();
-		}());
+template isRunnable(S) {
+	enum bool isRunnable = __traits(compiles, checkRunnable!S);
+}
+
+bool checkRunnable(S)()
+{
+	S s;
+	s.run();
+	return true;
+}
+
+bool checkRunnable(alias S, Args...)()
+	if (__traits(isTemplate, S))
+{
+	alias T = S!Args;
+	T t;
+	t.run();
+	assert(onlyValidFor!(isRunnable, S, Args), str!S ~ " doesn't depend on " ~ str!Args);
+	return true;
 }
 
 private template PushElementType(S, Args...) {
@@ -100,14 +113,6 @@ private template PushElementType(S, Args...) {
 	} else {
 		alias PushElementType = ElementType!(typeof({ S s; return &s.push!Args; }()));
 	}
-}
-
-///
-template isPushable(S) {
-	enum bool isPushable =
-		   is(PushElementType!(S))
-		|| is(PushElementType!(S, SomePOD!"isPushable"))
-		|| is(PushElementType!(S, null));
 }
 
 ///
@@ -140,14 +145,6 @@ private template PullElementType(S, Args...) {
 }
 
 ///
-template isPullable(S) {
-	enum bool isPullable =
-		   is(PullElementType!(S))
-		|| is(PullElementType!(S, SomePOD!"isPullable"))
-		|| is(PullElementType!(S, null));
-}
-
-///
 template FixedPullType(S) {
 	static if (!is(PullElementType!(S, SomePOD!"FixedPullType"))) {
 		static if (is(PullElementType!(S) T))
@@ -171,14 +168,6 @@ private template AllocElementType(S, bool templateCommit, AllocArgs...) {
 				s.commit(buf.length);
 			return T.init;
 		}());
-}
-
-///
-template isAllocable(S) {
-	enum isAllocable =
-		   is(AllocElementType!(S, false))
-		|| is(AllocElementType!(S, true))
-		|| is(AllocElementType!(S, true, SomePOD!"isAllocable"));
 }
 
 ///
@@ -212,14 +201,6 @@ private template PeekElementType(S, bool templateConsume, PeekArgs...) {
 				s.consume(buf.length);
 			return T.init;
 		}());
-}
-
-///
-template isPeekable(S) {
-	enum bool isPeekable =
-		   is(PeekElementType!(S, false))
-		|| is(PeekElementType!(S, true))
-		|| is(PeekElementType!(S, true, SomePOD!"isPeekable"));
 }
 
 ///
@@ -699,101 +680,265 @@ template CommonType(alias Source, alias Sink, DefaultType = ubyte)
 	}
 }
 
-template check(string sinkMethod, string sourceMethod, S...)
-	if (S.length == 1)
+// static interface
+private template None() {}
+template PeekSink() {}
+template PullSink() {}
+template PushSink() {}
+template AllocSink() {}
+template PeekSource() {}
+template PullSource() {}
+template PushSource() {}
+template AllocSource() {}
+
+private auto getMemberFunction(string name, S)(ref S s)
 {
-	static if (sinkMethod == "peek" && sourceMethod == "push") {
-		alias __S = S[0];
-		alias __check = __S!(DummyPeekSource, DummyPushSink);
-		static assert(isRunnable!__check);
-		enum check = true;
-	}
-	else {
-		static assert(0, "not implemented");
-	}
+	mixin(`
+		static if (is(typeof(&s.` ~ name ~ `!(SomePOD!name))))
+			return __ctfe ? &s.` ~ name ~ `!(SomePOD!name) : null;
+		else static if (is(typeof(&s.` ~ name ~ `!())))
+			return __ctfe ? &s.` ~ name ~ `!() : null;
+		else static if (is(typeof(&s.` ~ name ~ `)))
+			return __ctfe ? &s.` ~ name ~ ` : null;
+		else static assert(0);`);
 }
 
-template satisfies(alias Constraint, S...) {
-	enum id = __traits(identifier, Constraint);
-	static assert(id != "Constraint", "Undefined constraint: " ~ Constraint.stringof);
-	enum check = "check" ~ id[2 .. $];
-	enum assert_ = "static assert(" ~ check ~ "!S);";
-	mixin(assert_);
-}
-
-bool checkPushSink(S...)()
-{
-	if (!__ctfe) {
-		return true;
-	} else {
-		static if (S.length != 1) {
-			return false;
-		} else static if (is(S[0])) {
-			alias P = S[0];
-			P s;
-			static if (is(FixedPushType!P T))
-				size_t result = s.push(new T[1]);
-			else
-				size_t result = s.push(new int[1]);
-			return true;
-		} else {
-			return false;
-		}
+unittest {
+	static struct Bar {
+		void foo();
+		void bar()(size_t n);
+		int baz(T)(T a);
 	}
+	Bar bar;
+	import std.traits : isCallable;
+	static assert(isCallable!(typeof(getMemberFunction!"foo"(bar))));
+	static assert(isCallable!(typeof(getMemberFunction!"bar"(bar))));
+	static assert(isCallable!(typeof(getMemberFunction!"baz"(bar))));
 }
 
-bool checkPushSource(S...)()
+private bool checkPeekable(alias S)() {
+	S s;
+	auto peek = getMemberFunction!"peek"(s);
+	auto consume = getMemberFunction!"consume"(s);
+	auto buf = peek(1);
+	consume(1);
+	size_t n = buf.length;
+	auto x = buf[0];
+	auto y = buf[$ - 1];
+	return true;
+}
+
+///
+template isPeekable(S) {
+	enum bool isPeekable = /+
+		   is(PeekElementType!(S, false))
+		|| is(PeekElementType!(S, true))
+		|| is(PeekElementType!(S, true, SomePOD!"isPeekable")); +/
+	__traits(compiles, checkPeekable!S);
+}
+
+private bool checkPullable(alias S)() {
+	S s;
+	static assert(__traits(hasMember, S, "pull"));
+	auto func = getMemberFunction!"pull"(s);
+	import std.traits : ParameterTypeTuple, Unqual;
+	import std.range : ElementEncodingType;
+	alias T = Unqual!(ElementEncodingType!(ParameterTypeTuple!(typeof(func))[0]));
+	auto buf = new T[1024];
+	size_t n = s.pull(buf);
+	return true;
+}
+
+///
+template isPullable(S) {
+	enum bool isPullable = /+
+		   is(PullElementType!(S))
+		|| is(PullElementType!(S, SomePOD!"isPullable"))
+		|| is(PullElementType!(S, null));+/
+	__traits(compiles, checkPullable!S);
+
+}
+
+private bool checkPushable(alias S)() {
+	S s;
+	static assert(__traits(hasMember, S, "push"));
+	auto func = getMemberFunction!"push"(s);
+	import std.traits : ParameterTypeTuple, Unqual;
+	import std.range : ElementEncodingType;
+	alias T = Unqual!(ElementEncodingType!(ParameterTypeTuple!(typeof(func))[0]));
+	auto buf = new const(T)[1024];
+	size_t n = s.push(buf);
+	return true;
+}
+
+///
+template isPushable(S) {
+	enum bool isPushable = /+
+		   is(PushElementType!(S))
+		|| is(PushElementType!(S, SomePOD!"isPushable"))
+		|| is(PushElementType!(S, null)); +/
+	__traits(compiles, checkPushable!S);
+}
+
+
+private bool checkAllocable(alias S)() {
+	S s;
+	auto alloc = getMemberFunction!"alloc"(s);
+	auto commit = getMemberFunction!"commit"(s);
+	auto buf = alloc(1);
+	size_t n = buf.length;
+	typeof(*buf.ptr) dataEl;
+	buf[0] = dataEl;
+	buf[$ - 1] = dataEl;
+	commit(1); // TODO: commit should return size_t
+	return true;
+}
+
+///
+template isAllocable(S) {
+	enum isAllocable = /+
+		   is(AllocElementType!(S, false))
+		|| is(AllocElementType!(S, true))
+		|| is(AllocElementType!(S, true, SomePOD!"isAllocable"));+/
+	__traits(compiles, checkAllocable!S);
+}
+
+private bool check(alias test, alias req, alias S, Args...)()
 {
-	if (!__ctfe) {
-		return true;
-	} else {
-		static if (S.length != 1) {
-			return false;
-		} else static if (is(S[0])) {
-			static assert(0, S[0].stringof ~ " must be a struct template, not a " ~ str!S[0]);
-		} else {
-			alias Templ = S[0];
-			static if (isType!(Templ, DummyPushSink)) {
-				alias Type = Templ!DummyPushSink;
-				static if (isRunnable!Type) {
-					return true;
-				} else if (isPushable!Type) {
-					return true;
-				} else if (isAllocable!Type) {
-					return true;
-				} else {
-					Type t;
-					t.run();
-					size_t a = t.push(new void[1]);
-					return true;
+	alias T = S!Args;
+	T t;
+	static if (!__traits(compiles, test!T))
+		return test!T;
+	static assert(Args.length == 1 || Args.length == 2);
+	static assert(onlyValidFor!(req, S, Args));
+	return true;
+}
+
+bool implements(alias sinkMethod, alias sourceMethod, alias S)() {
+	if (__ctfe) {
+		struct Id(S...) {}
+		struct E {}
+		static if (is(Id!sinkMethod == Id!None)) {
+			static assert(!isPeekSink!S);
+			static assert(!isPullSink!S);
+			static assert(!isPushSink!S);
+			static assert(!isAllocSink!S);
+			static if (is(Id!sourceMethod == Id!PeekSource)) {
+				static if (!__traits(compiles, checkPeekable!S))
+					return checkPeekable!S;
+			} else static if (is(Id!sourceMethod == Id!PullSource)) {
+				static if (!__traits(compiles, checkPullable!S))
+					return checkPullable!S;
+			} else static if (is(Id!sourceMethod == Id!PushSource)) {
+				static if (!__traits(compiles, checkRunnable!(S, DummyPushSink))) {
+					S!DummyPushSink q;
+					q.run();
+					pragma(msg, typeof(q.run()).stringof);
+					return checkRunnable!(S, DummyPushSink);
 				}
+			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
+				static if (!__traits(compiles, checkRunnable!(S, DummyAllocSink)))
+					return checkRunnable!(S, DummyAllocSink);
 			} else {
-				alias Type = Templ!DummyPushSink;
-				Type t;
-				t.run();
-				return false;
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
 			}
+		} else static if (is(Id!sourceMethod == Id!None)) {
+			static assert(!isPeekSource!S);
+			static assert(!isPullSource!S);
+			static assert(!isPushSource!S);
+			static assert(!isAllocSource!S);
+			static if (is(Id!sinkMethod == Id!PushSink)) {
+				static if (!__traits(compiles, checkPushable!S))
+					return checkPushable!S;
+			} else static if (is(Id!sinkMethod == Id!AllocSink)) {
+				static if (!__traits(compiles, checkAllocable!S))
+					return checkAllocable!S;
+			} else static if (is(Id!sinkMethod == Id!PullSink)) {
+				static if (!__traits(compiles, checkRunnable!(S, DummyPullSource)))
+					return checkRunnable!(S, DummyPullSource);
+			} else static if (is(Id!sinkMethod == Id!PeekSink)) {
+				static if (!__traits(compiles, checkRunnable!(S, DummyPeekSource)))
+					return checkRunnable!(S, DummyPeekSource);
+			} else {
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			}
+		} else static if (is(Id!sinkMethod == Id!PeekSink)) {
+			static if (is(Id!sourceMethod == Id!PeekSource)) {
+				return check!(checkPeekable, isPeekable, S, DummyPeekSource);
+			} else static if (is(Id!sourceMethod == Id!PullSource)) {
+				return check!(checkPullable, isPullable, S, DummyPeekSource);
+			} else static if (is(Id!sourceMethod == Id!PushSource)) {
+				return check!(checkRunnable, isRunnable, S, DummyPeekSource, DummyPushSink);
+			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
+				return check!(checkRunnable, isRunnable, S, DummyPeekSource, DummyAllocSink);
+			} else {
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			}
+		} else static if (is(Id!sinkMethod == Id!PullSink)) {
+			static if (is(Id!sourceMethod == Id!PeekSource)) {
+				return check!(checkPeekable, isPeekable, S, DummyPullSource);
+			} else static if (is(Id!sourceMethod == Id!PullSource)) {
+				return check!(checkPullable, isPullable, S, DummyPullSource);
+			} else static if (is(Id!sourceMethod == Id!PushSource)) {
+				return check!(checkRunnable, isRunnable, S, DummyPullSource, DummyPushSink);
+			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
+				return check!(checkRunnable, isRunnable, S, DummyPullSource, DummyAllocSink);
+			} else {
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			}
+		} else static if (is(Id!sinkMethod == Id!PushSink)) {
+			static if (is(Id!sourceMethod == Id!PeekSource)) {
+				static if (!__traits(compiles, checkPushable!S))
+					return checkPushable!S;
+				else static if (!__traits(compiles, checkPeekable!S))
+					return checkPeekable!S;
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PullSource)) {
+				static if (!__traits(compiles, checkPushable!S))
+					return checkPushable!S;
+				else static if (!__traits(compiles, checkPullable!S))
+					return checkPullable!S;
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PushSource)) {
+				return check!(checkPushable, isPushable, S, DummyPushSink);
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!AllocSource)) {
+				return check!(checkPushable, isPushable, S, DummyAllocSink);
+			} else {
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			}
+		} else static if (is(Id!sinkMethod == Id!AllocSink)) {
+			static if (is(Id!sourceMethod == Id!PeekSource)) {
+				static if (!__traits(compiles, checkPushable!S))
+					return checkPushable!S;
+				else static if (!__traits(compiles, checkPeekable!S))
+					return checkPeekable!S;
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PullSource)) {
+				static if (!__traits(compiles, checkPushable!S))
+					return checkPushable!S;
+				else static if (!__traits(compiles, checkPullable!S))
+					return checkPullable!S;
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PushSource)) {
+				return check!(checkPushable, isPushable, S, DummyPushSink);
+			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!AllocSource)) {
+				return check!(checkPushable, isPushable, S, DummyAllocSink);
+			} else {
+				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			}
+		} else {
+			static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
 		}
 	}
+	return true;
 }
 
-bool checkAllocSource(S...)()
-{
-	if (!__ctfe) {
-		return true;
-	} else {
-		assert(S.length == 1);
-		assert(__traits(isTemplate, S[0]));
-		alias Templ = S[0];
-		assert(isType!(Templ, DummyAllocSink));
-		alias Type = Templ!DummyAllocSink;
-		Type t;
-		static if (isRunnable!Type || isPushable!Type || isAllocable!Type) {
-			return true;
-		} else {
-			t.run();
-			t.alloc(15);
-			t.push();
-		}
+bool implements(alias method, alias S)() pure {
+	if (__ctfe) {
+		struct Id(S...) {}
+		static if (is(Id!method == Id!PeekSink)
+			|| is(Id!method == Id!PullSink)
+			|| is(Id!method == Id!PushSink)
+			|| is(Id!method == Id!AllocSink))
+			return implements!(method, None, S);
+		else
+			return implements!(None, method, S);
 	}
+	return true;
 }

@@ -44,9 +44,12 @@ template str(W...) {
 			import std.conv : to;
 			enum str = to!string(W[0]);
 		} else {
+			import std.traits : fullyQualifiedName;
 			alias V = W[0];
 			static if (is(typeof(V.str) : string))
 				enum str = V.str;
+			else static if (__traits(compiles, fullyQualifiedName!V))
+				enum str = fullyQualifiedName!V;
 			else static if (__traits(compiles, __traits(identifier, V)))
 				enum str = __traits(identifier, V);
 			else
