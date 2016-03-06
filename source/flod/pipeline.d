@@ -31,9 +31,7 @@ template isImmediatePipeline(P) {
 template isPushPipeline(P) {
 	template impl() {
 		static if (is(typeof({
-						static struct PushSink {
-							size_t push(T)(const(T)[] buf) { return buf.length; }
-						}
+						import flod.traits : PushSink;
 						P p;
 						return p.create(PushSink());
 					}()) Result)) {
@@ -49,10 +47,7 @@ template isPushPipeline(P) {
 template isAllocPipeline(P) {
 	template impl() {
 		static if (is(typeof({
-						static struct AllocSink {
-							auto alloc(T = ubyte)(size_t n) { return new T[n]; }
-							size_t commit(size_t) { return n; }
-						}
+						import flod.traits : AllocSink;
 						P p;
 						return p.create(AllocSink());
 					}()) Result)) {
