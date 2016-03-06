@@ -8,27 +8,9 @@ module flod.traits;
 
 import flod.meta : isType, ReplaceWithMask, str;
 
-private struct DummyPullSource {
-	size_t pull(T)(T[] buf) { return buf.length; }
-}
-
-private struct DummyPeekSource {
-	const(T)[] peek(T = ubyte)(size_t n) { return new T[n]; };
-	void consume(T = ubyte)(size_t n) {}
-}
-
-private struct DummyPushSink {
-	size_t push(T)(const(T)[] buf) { return buf.length; }
-}
-
-private struct DummyAllocSink {
-	T[] alloc(T = ubyte)(size_t n) { return new T[n]; };
-	void commit(T = ubyte)(size_t n) {}
-}
-
-// test if S!Types can be instantiated and fullfills req
+// test if S!Types can be instantiated and satisfies req
 // but fails to do so if any of Types is substituted with empty struct
-private template onlyValidFor(alias req, alias S, Types...) {
+private template requiresSpecificTypes(alias req, alias S, Types...) {
 	template test(Params...) {
 		static if (!isType!(S, Params))
 			enum bool test = false;
@@ -53,9 +35,9 @@ private template onlyValidFor(alias req, alias S, Types...) {
 	}
 
 	static if (!test!Types)
-		enum onlyValidFor = false;
+		enum requiresSpecificTypes = false;
 	else
-		enum onlyValidFor = sub!((1UL << Types.length) - 2);
+		enum requiresSpecificTypes = sub!((1UL << Types.length) - 2);
 }
 
 private template WriteBufferType(alias buf) {
@@ -91,7 +73,7 @@ bool checkRunnable(alias S, Args...)()
 	alias T = S!Args;
 	T t;
 	t.run();
-	assert(onlyValidFor!(isRunnable, S, Args), str!S ~ " doesn't depend on " ~ str!Args);
+	assert(requiresSpecificTypes!(isRunnable, S, Args), str!S ~ " doesn't depend on " ~ str!Args);
 	return true;
 }
 
@@ -235,8 +217,8 @@ private template testStage(alias testType, alias testTemplate, S...) {
 template isPullSource(S...) {
 	template templ(alias Z) {
 		enum bool templ =
-			   onlyValidFor!(isPullable, Z, DummyPullSource)
-			|| onlyValidFor!(isPullable, Z, DummyPeekSource);
+			   requiresSpecificTypes!(isPullable, Z, PullSource)
+			|| requiresSpecificTypes!(isPullable, Z, PeekSource);
 	}
 	enum bool isPullSource = testStage!(isPullable, templ, S);;
 }
@@ -278,8 +260,8 @@ unittest {
 template isPeekSource(S...) {
 	template templ(alias Z) {
 	enum bool templ =
-		   onlyValidFor!(isPeekable, Z, DummyPullSource)
-		|| onlyValidFor!(isPeekable, Z, DummyPeekSource);
+		   requiresSpecificTypes!(isPeekable, Z, PullSource)
+		|| requiresSpecificTypes!(isPeekable, Z, PeekSource);
 	}
 	enum bool isPeekSource = testStage!(isPeekable, templ, S);
 }
@@ -321,11 +303,11 @@ Bugs: Always returns `false` for a non-copyable nested `struct`.
 template isPushSource(S...) {
 	template isPushSourceTempl(alias Z) {
 		enum isPushSourceTempl =
-			   onlyValidFor!(isRunnable,  Z, DummyPushSink)
-			|| onlyValidFor!(isPushable,  Z, DummyPushSink)
-			|| onlyValidFor!(isAllocable, Z, DummyPushSink)
-			|| onlyValidFor!(isRunnable,  Z, DummyPeekSource, DummyPushSink)
-			|| onlyValidFor!(isRunnable,  Z, DummyPullSource, DummyPushSink);
+			   requiresSpecificTypes!(isRunnable,  Z, PushSink)
+			|| requiresSpecificTypes!(isPushable,  Z, PushSink)
+			|| requiresSpecificTypes!(isAllocable, Z, PushSink)
+			|| requiresSpecificTypes!(isRunnable,  Z, PeekSource, PushSink)
+			|| requiresSpecificTypes!(isRunnable,  Z, PullSource, PushSink);
 	}
 	enum bool isPushSource = testStage!(null, isPushSourceTempl, S);
 }
@@ -450,11 +432,11 @@ unittest {
 template isAllocSource(S...) {
 	template isAllocSourceTempl(alias Z) {
 		enum isAllocSourceTempl =
-			   onlyValidFor!(isRunnable,  Z, DummyAllocSink)
-			|| onlyValidFor!(isPushable,  Z, DummyAllocSink)
-			|| onlyValidFor!(isAllocable, Z, DummyAllocSink)
-			|| onlyValidFor!(isRunnable,  Z, DummyPeekSource, DummyAllocSink)
-			|| onlyValidFor!(isRunnable,  Z, DummyPullSource, DummyAllocSink);
+			   requiresSpecificTypes!(isRunnable,  Z, AllocSink)
+			|| requiresSpecificTypes!(isPushable,  Z, AllocSink)
+			|| requiresSpecificTypes!(isAllocable, Z, AllocSink)
+			|| requiresSpecificTypes!(isRunnable,  Z, PeekSource, AllocSink)
+			|| requiresSpecificTypes!(isRunnable,  Z, PullSource, AllocSink);
 	}
 	enum isAllocSource = testStage!(null, isAllocSourceTempl, S);
 }
@@ -467,8 +449,8 @@ unittest {
 template isPushSink(S...) {
 	template templ(alias Z) {
 		enum bool templ =
-			   onlyValidFor!(isPushable, Z, DummyPushSink)
-			|| onlyValidFor!(isPushable, Z, DummyAllocSink);
+			   requiresSpecificTypes!(isPushable, Z, PushSink)
+			|| requiresSpecificTypes!(isPushable, Z, AllocSink);
 	}
 	enum bool isPushSink = testStage!(isPushable, templ, S);
 }
@@ -481,8 +463,8 @@ unittest {
 template isAllocSink(S...) {
 	private template templ(alias S) {
 		enum bool templ =
-			   onlyValidFor!(isAllocable, S, DummyPushSink)
-			|| onlyValidFor!(isAllocable, S, DummyAllocSink);
+			   requiresSpecificTypes!(isAllocable, S, PushSink)
+			|| requiresSpecificTypes!(isAllocable, S, AllocSink);
 	}
 	enum bool isAllocSink = testStage!(isAllocable, templ, S);
 }
@@ -523,11 +505,11 @@ unittest {
 template isPullSink(S...) {
 	private template isPushSinkTempl(alias Z) {
 		enum isPushSinkTempl =
-			   onlyValidFor!(isRunnable, Z, DummyPullSource)
-			|| onlyValidFor!(isPullable, Z, DummyPullSource)
-			|| onlyValidFor!(isPeekable, Z, DummyPullSource)
-			|| onlyValidFor!(isRunnable, Z, DummyPullSource, DummyPushSink)
-			|| onlyValidFor!(isRunnable, Z, DummyPullSource, DummyAllocSink);
+			   requiresSpecificTypes!(isRunnable, Z, PullSource)
+			|| requiresSpecificTypes!(isPullable, Z, PullSource)
+			|| requiresSpecificTypes!(isPeekable, Z, PullSource)
+			|| requiresSpecificTypes!(isRunnable, Z, PullSource, PushSink)
+			|| requiresSpecificTypes!(isRunnable, Z, PullSource, AllocSink);
 	}
 	enum isPullSink = testStage!(null, isPushSinkTempl, S);
 }
@@ -556,12 +538,12 @@ template isPeekSink(S...) {
 	private template isPeekSinkTempl(alias Z) {
 		import std.range : isInputRange;
 		enum isPeekSinkTempl =
-			   onlyValidFor!(isInputRange, Z, DummyPeekSource)
-			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource)
-			|| onlyValidFor!(isPullable,   Z, DummyPeekSource)
-			|| onlyValidFor!(isPeekable,   Z, DummyPeekSource)
-			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource, DummyPushSink)
-			|| onlyValidFor!(isRunnable,   Z, DummyPeekSource, DummyAllocSink);
+			   requiresSpecificTypes!(isInputRange, Z, PeekSource)
+			|| requiresSpecificTypes!(isRunnable,   Z, PeekSource)
+			|| requiresSpecificTypes!(isPullable,   Z, PeekSource)
+			|| requiresSpecificTypes!(isPeekable,   Z, PeekSource)
+			|| requiresSpecificTypes!(isRunnable,   Z, PeekSource, PushSink)
+			|| requiresSpecificTypes!(isRunnable,   Z, PeekSource, AllocSink);
 	}
 	enum bool isPeekSink = testStage!(null, isPeekSinkTempl, S);
 }
@@ -680,16 +662,97 @@ template CommonType(alias Source, alias Sink, DefaultType = ubyte)
 	}
 }
 
-// static interface
+// used in 2-argument `implements` to mark a lack of source end or sink end in the tested filter
 private template None() {}
-template PeekSink() {}
-template PullSink() {}
-template PushSink() {}
-template AllocSink() {}
-template PeekSource() {}
-template PullSource() {}
-template PushSource() {}
-template AllocSource() {}
+
+/** Defines the interface of a peek-sink.
+ *
+ * Note that the interface in this case includes
+ * not only the public members `source` and `run`, but also that a peek-sink must call
+ * its source's member functions `peek` and `consume`.
+ */
+@implements!(PeekSink, PeekSink) // sanity check
+struct PeekSink(Source) {
+	Source source;
+	void run()() {
+		auto buf = source.peek(1);
+		source.consume(buf.length);
+	}
+}
+
+/** Defines the interface of a pull-sink.
+ *
+ * Note that the interface in this case includes
+ * not only the public members `source` and `run`, but also that a pull-sink must call
+ * its source's member function `pull`.
+ */
+@implements!(PullSink, PullSink) // sanity check
+struct PullSink(Source) {
+	Source source;
+	void run()() {
+		alias T = SourceElementType!Source;
+		T[1] buf;
+		size_t n = source.pull(buf[]);
+	}
+}
+
+/** Defines the interface of a push-source.
+ *
+ * Note that the interface in this case includes
+ * not only the public members `sink` and `run`, but also that a push-source must call
+ * its sink's member function `push`.
+ */
+@implements!(PushSource, PushSource) // sanity check
+struct PushSource(Sink) {
+	Sink sink;
+	void run()() {
+		alias T = SinkElementType!Sink;
+		T[1] buf;
+		size_t n = sink.push(buf[]);
+	}
+}
+
+/** Defines the interface of an alloc-source.
+ *
+ * Note that the interface in this case includes
+ * not only the public members `sink` and `run`, but also that an alloc-source must call
+ * its sink's member functions `alloc` and `commit`.
+ */
+@implements!(AllocSource, AllocSource) // sanity check
+struct AllocSource(Sink) {
+	Sink sink;
+	void run()() {
+		auto buf = sink.alloc(10);
+		buf[] = buf[0].init;
+		sink.commit(buf.length); // TODO: commit returns size_t
+	}
+}
+
+/// Defines the inteface of a pull-source.
+@implements!(PullSource, PullSource)
+struct PullSource {
+	size_t pull(T)(T[] buf) { return buf.length; }
+}
+
+/// Defines the interface of a peek-source.
+@implements!(PeekSource, PeekSource)
+struct PeekSource {
+	const(T)[] peek(T = ubyte)(size_t n) { return new T[n]; };
+	void consume(T = ubyte)(size_t n) {}
+}
+
+/// Defines the interface of a push-sink.
+@implements!(PushSink, PushSink)
+struct PushSink {
+	size_t push(T)(const(T)[] buf) { return buf.length; }
+}
+
+/// Defines the interface of an alloc-sink.
+@implements!(AllocSink, AllocSink)
+struct AllocSink {
+	T[] alloc(T = ubyte)(size_t n) { return new T[n]; };
+	void commit(T = ubyte)(size_t n) {}
+}
 
 private auto getMemberFunction(string name, S)(ref S s)
 {
@@ -728,7 +791,7 @@ private bool checkPeekable(alias S)() {
 	return true;
 }
 
-///
+/// Tests if type `S` implements member functions `peek` and `consume`.
 template isPeekable(S) {
 	enum bool isPeekable = /+
 		   is(PeekElementType!(S, false))
@@ -749,7 +812,7 @@ private bool checkPullable(alias S)() {
 	return true;
 }
 
-///
+/// Tests if type `S` implements member function `pull`.
 template isPullable(S) {
 	enum bool isPullable = /+
 		   is(PullElementType!(S))
@@ -771,7 +834,7 @@ private bool checkPushable(alias S)() {
 	return true;
 }
 
-///
+/// Tests if type `S` implements member function `push`.
 template isPushable(S) {
 	enum bool isPushable = /+
 		   is(PushElementType!(S))
@@ -779,7 +842,6 @@ template isPushable(S) {
 		|| is(PushElementType!(S, null)); +/
 	__traits(compiles, checkPushable!S);
 }
-
 
 private bool checkAllocable(alias S)() {
 	S s;
@@ -794,13 +856,22 @@ private bool checkAllocable(alias S)() {
 	return true;
 }
 
-///
+/// Tests if type `S` implements member functions `alloc` and `commit`.
 template isAllocable(S) {
 	enum isAllocable = /+
 		   is(AllocElementType!(S, false))
 		|| is(AllocElementType!(S, true))
 		|| is(AllocElementType!(S, true, SomePOD!"isAllocable"));+/
 	__traits(compiles, checkAllocable!S);
+}
+
+private bool check(alias test, alias S)()
+{
+	// this idiom is used to avoid check failures due to correct,
+	// but non-ctfeable code in stages
+	static if (!__traits(compiles, test!S))
+		return test!S;
+	return true;
 }
 
 private bool check(alias test, alias req, alias S, Args...)()
@@ -810,135 +881,167 @@ private bool check(alias test, alias req, alias S, Args...)()
 	static if (!__traits(compiles, test!T))
 		return test!T;
 	static assert(Args.length == 1 || Args.length == 2);
-	static assert(onlyValidFor!(req, S, Args));
+	static assert(requiresSpecificTypes!(req, S, Args));
 	return true;
 }
 
-bool implements(alias sinkMethod, alias sourceMethod, alias S)() {
+/** Tests if `S` _implements the specified sink and source interfaces.
+
+It is meant to be used as an attribute with the definition of `S`.
+If `S` fails to comply with any of the specified interfaces,
+a compilation error occurs.
+
+Params:
+sinkInterface   = One of: PushSink, AllocSink, PullSink, PeekSink.
+sourceInterface = One of: PullSource, PeekSource, PushSource, AllocSource.
+interface_ = One of: PullSource, PeekSource, PushSource, AllocSource, PushSink, AllocSink, PullSink, PeekSink
+S = struct or struct template to test
+
+Example:
+---
+@implements!(PushSink, NullSink) // fails to compile if there are errors in NullSink
+struct NullSink {
+	size_t push(T)(const(T)[] buf) { return buf.length; }
+}
+---
+
+*/
+bool implements(alias sinkInterface, alias sourceInterface, alias S)() {
 	if (__ctfe) {
 		struct Id(S...) {}
-		struct E {}
-		static if (is(Id!sinkMethod == Id!None)) {
+		static if (is(Id!sinkInterface == Id!None)) {
 			static assert(!isPeekSink!S);
 			static assert(!isPullSink!S);
 			static assert(!isPushSink!S);
 			static assert(!isAllocSink!S);
-			static if (is(Id!sourceMethod == Id!PeekSource)) {
-				static if (!__traits(compiles, checkPeekable!S))
-					return checkPeekable!S;
-			} else static if (is(Id!sourceMethod == Id!PullSource)) {
-				static if (!__traits(compiles, checkPullable!S))
-					return checkPullable!S;
-			} else static if (is(Id!sourceMethod == Id!PushSource)) {
-				static if (!__traits(compiles, checkRunnable!(S, DummyPushSink))) {
-					S!DummyPushSink q;
-					q.run();
-					pragma(msg, typeof(q.run()).stringof);
-					return checkRunnable!(S, DummyPushSink);
-				}
-			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
-				static if (!__traits(compiles, checkRunnable!(S, DummyAllocSink)))
-					return checkRunnable!(S, DummyAllocSink);
+			static if (is(Id!sourceInterface == Id!PeekSource)) {
+				return check!(checkPeekable, S);
+			} else static if (is(Id!sourceInterface == Id!PullSource)) {
+				return check!(checkPullable, S);
+			} else static if (is(Id!sourceInterface == Id!PushSource)) {
+				return check!(checkRunnable, isRunnable, S, PushSink);
+			} else static if (is(Id!sourceInterface == Id!AllocSource)) {
+				return check!(checkRunnable, isRunnable, S, AllocSink);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
-		} else static if (is(Id!sourceMethod == Id!None)) {
+		} else static if (is(Id!sourceInterface == Id!None)) {
 			static assert(!isPeekSource!S);
 			static assert(!isPullSource!S);
 			static assert(!isPushSource!S);
 			static assert(!isAllocSource!S);
-			static if (is(Id!sinkMethod == Id!PushSink)) {
-				static if (!__traits(compiles, checkPushable!S))
-					return checkPushable!S;
-			} else static if (is(Id!sinkMethod == Id!AllocSink)) {
-				static if (!__traits(compiles, checkAllocable!S))
-					return checkAllocable!S;
-			} else static if (is(Id!sinkMethod == Id!PullSink)) {
-				static if (!__traits(compiles, checkRunnable!(S, DummyPullSource)))
-					return checkRunnable!(S, DummyPullSource);
-			} else static if (is(Id!sinkMethod == Id!PeekSink)) {
-				static if (!__traits(compiles, checkRunnable!(S, DummyPeekSource)))
-					return checkRunnable!(S, DummyPeekSource);
+			static if (is(Id!sinkInterface == Id!PushSink)) {
+				return check!(checkPushable, S);
+			} else static if (is(Id!sinkInterface == Id!AllocSink)) {
+				return check!(checkAllocable, S);
+			} else static if (is(Id!sinkInterface == Id!PullSink)) {
+				return check!(checkRunnable, isRunnable, S, PullSource);
+			} else static if (is(Id!sinkInterface == Id!PeekSink)) {
+				return check!(checkRunnable, isRunnable, S, PeekSource);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
-		} else static if (is(Id!sinkMethod == Id!PeekSink)) {
-			static if (is(Id!sourceMethod == Id!PeekSource)) {
-				return check!(checkPeekable, isPeekable, S, DummyPeekSource);
-			} else static if (is(Id!sourceMethod == Id!PullSource)) {
-				return check!(checkPullable, isPullable, S, DummyPeekSource);
-			} else static if (is(Id!sourceMethod == Id!PushSource)) {
-				return check!(checkRunnable, isRunnable, S, DummyPeekSource, DummyPushSink);
-			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
-				return check!(checkRunnable, isRunnable, S, DummyPeekSource, DummyAllocSink);
+		} else static if (is(Id!sinkInterface == Id!PeekSink)) {
+			static if (is(Id!sourceInterface == Id!PeekSource)) {
+				return check!(checkPeekable, isPeekable, S, PeekSource);
+			} else static if (is(Id!sourceInterface == Id!PullSource)) {
+				return check!(checkPullable, isPullable, S, PeekSource);
+			} else static if (is(Id!sourceInterface == Id!PushSource)) {
+				return check!(checkRunnable, isRunnable, S, PeekSource, PushSink);
+			} else static if (is(Id!sourceInterface == Id!AllocSource)) {
+				return check!(checkRunnable, isRunnable, S, PeekSource, AllocSink);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
-		} else static if (is(Id!sinkMethod == Id!PullSink)) {
-			static if (is(Id!sourceMethod == Id!PeekSource)) {
-				return check!(checkPeekable, isPeekable, S, DummyPullSource);
-			} else static if (is(Id!sourceMethod == Id!PullSource)) {
-				return check!(checkPullable, isPullable, S, DummyPullSource);
-			} else static if (is(Id!sourceMethod == Id!PushSource)) {
-				return check!(checkRunnable, isRunnable, S, DummyPullSource, DummyPushSink);
-			} else static if (is(Id!sourceMethod == Id!AllocSource)) {
-				return check!(checkRunnable, isRunnable, S, DummyPullSource, DummyAllocSink);
+		} else static if (is(Id!sinkInterface == Id!PullSink)) {
+			static if (is(Id!sourceInterface == Id!PeekSource)) {
+				return check!(checkPeekable, isPeekable, S, PullSource);
+			} else static if (is(Id!sourceInterface == Id!PullSource)) {
+				return check!(checkPullable, isPullable, S, PullSource);
+			} else static if (is(Id!sourceInterface == Id!PushSource)) {
+				return check!(checkRunnable, isRunnable, S, PullSource, PushSink);
+			} else static if (is(Id!sourceInterface == Id!AllocSource)) {
+				return check!(checkRunnable, isRunnable, S, PullSource, AllocSink);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
-		} else static if (is(Id!sinkMethod == Id!PushSink)) {
-			static if (is(Id!sourceMethod == Id!PeekSource)) {
+		} else static if (is(Id!sinkInterface == Id!PushSink)) {
+			static if (is(Id!sourceInterface == Id!PeekSource)) {
 				static if (!__traits(compiles, checkPushable!S))
 					return checkPushable!S;
 				else static if (!__traits(compiles, checkPeekable!S))
 					return checkPeekable!S;
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PullSource)) {
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!PullSource)) {
 				static if (!__traits(compiles, checkPushable!S))
 					return checkPushable!S;
 				else static if (!__traits(compiles, checkPullable!S))
 					return checkPullable!S;
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PushSource)) {
-				return check!(checkPushable, isPushable, S, DummyPushSink);
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!AllocSource)) {
-				return check!(checkPushable, isPushable, S, DummyAllocSink);
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!PushSource)) {
+				return check!(checkPushable, isPushable, S, PushSink);
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!AllocSource)) {
+				return check!(checkPushable, isPushable, S, AllocSink);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
-		} else static if (is(Id!sinkMethod == Id!AllocSink)) {
-			static if (is(Id!sourceMethod == Id!PeekSource)) {
+		} else static if (is(Id!sinkInterface == Id!AllocSink)) {
+			static if (is(Id!sourceInterface == Id!PeekSource)) {
 				static if (!__traits(compiles, checkPushable!S))
 					return checkPushable!S;
 				else static if (!__traits(compiles, checkPeekable!S))
 					return checkPeekable!S;
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PullSource)) {
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!PullSource)) {
 				static if (!__traits(compiles, checkPushable!S))
 					return checkPushable!S;
 				else static if (!__traits(compiles, checkPullable!S))
 					return checkPullable!S;
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!PushSource)) {
-				return check!(checkPushable, isPushable, S, DummyPushSink);
-			} else static if (is(Id!sinkMethod == Id!PushSink) && is(Id!sourceMethod == Id!AllocSource)) {
-				return check!(checkPushable, isPushable, S, DummyAllocSink);
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!PushSource)) {
+				return check!(checkPushable, isPushable, S, PushSink);
+			} else static if (is(Id!sinkInterface == Id!PushSink) && is(Id!sourceInterface == Id!AllocSource)) {
+				return check!(checkPushable, isPushable, S, AllocSink);
 			} else {
-				static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+				static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 			}
 		} else {
-			static assert(0, "Invalid arguments: " ~ str!sinkMethod ~ ", " ~ str!sourceMethod ~ ", " ~ str!S);
+			static assert(0, "Invalid arguments: " ~ str!sinkInterface ~ ", " ~ str!sourceInterface ~ ", " ~ str!S);
 		}
 	}
 	return true;
 }
 
-bool implements(alias method, alias S)() pure {
+/// ditto
+bool implements(alias interface_, alias S)() pure {
 	if (__ctfe) {
 		struct Id(S...) {}
-		static if (is(Id!method == Id!PeekSink)
-			|| is(Id!method == Id!PullSink)
-			|| is(Id!method == Id!PushSink)
-			|| is(Id!method == Id!AllocSink))
-			return implements!(method, None, S);
+		static if (is(Id!interface_ == Id!PeekSink)
+			|| is(Id!interface_ == Id!PullSink)
+			|| is(Id!interface_ == Id!PushSink)
+			|| is(Id!interface_ == Id!AllocSink))
+			return implements!(interface_, None, S);
 		else
-			return implements!(None, method, S);
+			return implements!(None, interface_, S);
 	}
 	return true;
+}
+
+///
+template SourceElementType(alias S, Default = ubyte) {
+	static if (isPullSource!S) {
+		static if (is(FixedPullType!S F))
+			alias SourceElementType = F;
+		else
+			alias SourceElementType = Default;
+	}
+	else static assert(0, "not implemented");
+
+}
+
+///
+template SinkElementType(alias S, Default = ubyte) {
+	static if (isPushSink!S) {
+		static if (is(FixedPushType!S F))
+			alias SinkElementType = F;
+		else
+			alias SinkElementType = Default;
+	}
+	else static assert(0, "not implemented");
 }
