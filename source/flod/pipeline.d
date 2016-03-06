@@ -51,7 +51,7 @@ template isAllocPipeline(P) {
 		static if (is(typeof({
 						static struct AllocSink {
 							auto alloc(T = ubyte)(size_t n) { return new T[n]; }
-							void commit(size_t) {} // TODO: commit returns size_t
+							size_t commit(size_t) { return n; }
 						}
 						P p;
 						return p.create(AllocSink());
@@ -233,8 +233,7 @@ Filters:
 			for (;;) {
 				auto buf = sink.alloc(15);
 				buf[] = typeof(buf[0]).init;
-				sink.commit(buf.length); // TODO: commit returns size_t
-				if (buf.length != 15)
+				if (sink.commit(buf.length) != 15)
 					break;
 			}
 		}
@@ -279,7 +278,7 @@ Filters:
 	@implements!(AllocSink, TestAllocSink)
 	struct TestAllocSink {
 		auto alloc(T = ubyte)(size_t n) { return new T[n - 1]; }
-		void commit(T = ubyte)(size_t n) {} // TODO: commit returns size_t
+		size_t commit(T = ubyte)(size_t n) { return n; }
 	}
 	static assert(isAllocSink!TestAllocSink);
 	static assert(!isSource!TestAllocSink);
@@ -328,9 +327,12 @@ Filters:
 
 		void run()
 		{
-			auto buf = sink.alloc(4096);
-			auto n = source.pull(buf);
-			sink.commit(n); // TODO: commit returns size_t
+			for (;;) {
+				auto buf = sink.alloc(4096);
+				auto n = source.pull(buf);
+				if (sink.commit(n) != 4096)
+					break;
+			}
 		}
 	}
 

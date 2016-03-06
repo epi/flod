@@ -145,9 +145,9 @@ private template AllocElementType(S, bool templateCommit, AllocArgs...) {
 				auto buf = s.alloc(size_t(1));
 			alias T = WriteBufferType!buf;
 			static if (templateCommit)
-				s.commit!T(buf.length);
+				size_t n = s.commit!T(buf.length);
 			else
-				s.commit(buf.length);
+				size_t n = s.commit(buf.length);
 			return T.init;
 		}());
 }
@@ -373,8 +373,8 @@ unittest {
 			buf = new P[n];
 			return buf;
 		}
-		void commit(size_t s) {
-			sink.push(buf[0 .. s]);
+		size_t commit(size_t s) {
+			return sink.push(buf[0 .. s]);
 		}
 	}
 	static assert(isPushSource!Forward);
@@ -473,30 +473,30 @@ unittest {
 	static assert(!isAllocSink!int);
 	static struct NullSink {
 		ubyte[] alloc(size_t n) { return new ubyte[n]; }
-		void commit(size_t n) {}
+		size_t commit(size_t n) { return n; }
 	}
 	static assert(isAllocSink!NullSink);
 	static struct GenericNullSink {
 		T[] alloc(T = ubyte)(size_t n) { return new T[n]; }
-		void commit(T)(size_t n) {}
+		size_t commit(T)(size_t n) { return n; }
 	}
 	static assert(isAllocSink!GenericNullSink);
 	static struct TemplateAllocSink {
 		ubyte[] alloc()(size_t n) { return new ubyte[n]; }
-		void commit()(size_t n) {}
+		size_t commit()(size_t n) { return n; }
 	}
 	static assert(isAllocSink!TemplateAllocSink);
 	static struct AllocSourceSink(Sink) {
 		Sink sink;
 		auto alloc(T)(size_t n) { return sink.alloc!T(n); }
-		void commit(T)(size_t n) { sink.commit!T(n); }
+		size_t commit(T)(size_t n) { return sink.commit!T(n); }
 	}
 	static assert(isAllocSink!AllocSourceSink);
 	static struct PushSourceSink(Sink) {
 		Sink sink;
 		void[] buf;
 		auto alloc(T)(size_t n) { auto b = new T[n]; buf = cast(void[]) b; return b; }
-		void commit(T)(size_t n) { sink.push!T(cast(T[]) buf); }
+		size_t commit(T)(size_t n) { return sink.push!T(cast(T[]) buf); }
 	}
 	static assert(isAllocSink!PushSourceSink);
 }
@@ -724,7 +724,7 @@ struct AllocSource(Sink) {
 	void run()() {
 		auto buf = sink.alloc(10);
 		buf[] = buf[0].init;
-		sink.commit(buf.length); // TODO: commit returns size_t
+		size_t n = sink.commit(buf.length);
 	}
 }
 
@@ -751,7 +751,7 @@ struct PushSink {
 @implements!(AllocSink, AllocSink)
 struct AllocSink {
 	T[] alloc(T = ubyte)(size_t n) { return new T[n]; };
-	void commit(T = ubyte)(size_t n) {}
+	size_t commit(T = ubyte)(size_t n) { return n; }
 }
 
 private auto getMemberFunction(string name, S)(ref S s)
@@ -852,7 +852,7 @@ private bool checkAllocable(alias S)() {
 	typeof(*buf.ptr) dataEl;
 	buf[0] = dataEl;
 	buf[$ - 1] = dataEl;
-	commit(1); // TODO: commit should return size_t
+	size_t m = commit(1);
 	return true;
 }
 
