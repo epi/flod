@@ -116,7 +116,7 @@ auto peekPull(Pipeline)(auto ref Pipeline pipeline)
 	return pipeline.pipe!DefaultPeekPullAdapter();
 }
 
-@implements!(PeekSink, PushSource, DefaultPeekPushAdapter)
+@implements!(PullSink, PushSource, DefaultPullPushAdapter)
 private struct DefaultPullPushAdapter(Source, Sink) {
 	alias T = CommonType!(Source, Sink, ubyte);
 	Source source;
