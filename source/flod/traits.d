@@ -120,7 +120,7 @@ private template PullElementType(S, Args...) {
 			}());
 	}
 	static if (is(typeof(Args[0]) == typeof(null))) {
-		alias PullElementType = ElementType!(typeof({ S s; return &s.pull; }));
+		alias PullElementType = ElementType!(typeof({ S s; return &s.pull; }()));
 	} else {
 		alias PullElementType = ElementType!(typeof({ S s; return &s.pull!Args; }()));
 	}
@@ -1028,6 +1028,13 @@ template SourceElementType(alias S, Default = ubyte) {
 	static if (isPullSource!S) {
 		static if (is(FixedPullType!S F))
 			alias SourceElementType = F;
+		else
+			alias SourceElementType = Default;
+	} else static if (isPeekSource!S) {
+		static if (is(FixedPeekType!S F))
+			alias SourceElementType = F;
+		else static if (is(DefaultPeekType!S D))
+			alias SourceElementType = D;
 		else
 			alias SourceElementType = Default;
 	}
