@@ -8,6 +8,7 @@ module flod.adapter;
 
 import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
 import flod.traits;
+import flod.meta;
 
 template PullElementType(Source, Default) {
 	static if (is(FixedPullType!Source F))
@@ -28,8 +29,6 @@ private template DefaultPullPeekAdapter(Buffer)
 	@implements!(PullSink, PeekSource, DefaultPullPeekAdapter)
 	struct DefaultPullPeekAdapter(Source) {
 	private:
-		import std.stdio;
-
 		Source source;
 		Buffer buffer;
 
@@ -80,12 +79,12 @@ auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buff
 auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	if (isPullPipeline!Pipeline)
 {
-	import flod.buffer : mmappedBuffer;
-	return pipeline.pullPeek(mmappedBuffer());
+	import flod.buffer : movingBuffer;
+	return pipeline.pullPeek(movingBuffer());
 }
 
 @implements!(PeekSink, PullSource, DefaultPeekPullAdapter)
-struct DefaultPeekPullAdapter(Source) {
+private struct DefaultPeekPullAdapter(Source) {
 private:
 	Source source;
 
@@ -110,9 +109,15 @@ public:
 static assert(isPullSource!DefaultPeekPullAdapter);
 static assert(isPeekSink!DefaultPeekPullAdapter);
 
+///
+auto peekPull(Pipeline)(auto ref Pipeline pipeline)
+	if (isPeekPipeline!Pipeline)
+{
+	return pipeline.pipe!DefaultPeekPullAdapter();
+}
+
 @implements!(PeekSink, PushSource, DefaultPeekPushAdapter)
-struct DefaultPullPushAdapter(Source, Sink) {
-//private:
+private struct DefaultPullPushAdapter(Source, Sink) {
 	alias T = CommonType!(Source, Sink, ubyte);
 	Source source;
 	Sink sink;
@@ -323,8 +328,6 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 	import flod.buffer : movingBuffer;
 	return pipeline.pushPull(movingBuffer());
 }
-
-import flod.meta;
 
 unittest {
 	static struct ArraySource(Sink) {

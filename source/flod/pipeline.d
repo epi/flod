@@ -551,9 +551,9 @@ body
 	} else static if (isPullable!Pipeline && isPullSink!Stage) {
 		return Stage!Pipeline(moveIfNonCopyable(pipeline), args);
 	} else static if (isPeekable!Pipeline && isPullSink!Stage) {
-		import flod.adapter : DefaultPeekPullAdapter;
+		import flod.adapter : peekPull;
 		debug pragma(msg, "Inserting implicit peek-pull adapter");
-		return pipeline.appendPipe!DefaultPeekPullAdapter.appendPipe!Stage(args);
+		return pipeline.peekPull.appendPipe!Stage(args);
 	} else static if (isPullable!Pipeline && isPeekSink!Stage) {
 		import flod.adapter : pullPeek;
 		debug pragma(msg, "Inserting implicit pull-peek adapter");
@@ -645,9 +645,9 @@ private auto appendPipe(alias Stage, Pipeline, Args...)(auto ref Pipeline pipeli
 		debug pragma(msg, "Inserting implicit pull-peek adapter");
 		return pipeline.pullPeek.appendPipe!Stage(args);
 	} else static if (isPeekPipeline!Pipeline && isPullSink!Stage) {
-		import flod.adapter : DefaultPeekPullAdapter;
+		import flod.adapter : peekPull;
 		debug pragma(msg, "Inserting implicit peek-pull adapter");
-		return pipeline.appendPipe!DefaultPeekPullAdapter.appendPipe!Stage(args);
+		return pipeline.peekPull.appendPipe!Stage(args);
 	}
 }
 
