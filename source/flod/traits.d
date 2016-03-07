@@ -6,6 +6,142 @@
  */
 module flod.traits;
 
+struct PullSource(E) {
+	size_t pull(E[] buf) { return buf.length; }
+}
+
+struct PeekSource(E) {
+	const(E)[] peek(size_t n) { return new E[n]; }
+	void consume(size_t n) {}
+}
+
+struct PushSource(E) {}
+
+struct AllocSource(E) {}
+
+struct PullSink(E) {}
+
+struct PeekSink(E) {}
+
+struct PushSink(E) {
+	size_t push(const(E)[] buf) { return buf.length; }
+}
+
+struct AllocSink(E) {
+	bool alloc(ref E[] buf, size_t n) { buf = new E[n]; return true; }
+	void consume(size_t n) {}
+}
+
+enum pullSource(E) = PullSource!E();
+enum peekSource(E) = PeekSource!E();
+enum pushSource(E) = PushSource!E();
+enum allocSource(E) = AllocSource!E();
+
+enum pullSink(E) = PullSink!E();
+enum peekSink(E) = PeekSink!E();
+enum pushSink(E) = PushSink!E();
+enum allocSink(E) = AllocSink!E();
+
+private struct None {}
+
+private struct Id(S...) {}
+
+private template isSame(alias S) {
+	template isSame(alias Z) {
+		enum isSame = is(Id!S == Id!Z);
+	}
+}
+
+private template areSame(W...) {
+	enum areSame = is(Id!(W[0 .. $ / 2]) == Id!(W[$ / 2 .. $]));
+}
+
+package template Traits(alias Src = None, alias Snk = None, SrcE = void, SnkE = void, UDAs...)
+{
+	static if (UDAs.length == 0) {
+		alias Source = Src;
+		alias Sink = Snk;
+		alias SourceElementType = SrcE;
+		alias SinkElementType = SnkE;
+	} else {
+		import std.meta : anySatisfy;
+
+		alias T = typeof(UDAs[0]);
+		static if (is(T == S!E, alias S, E)) {
+			static if (anySatisfy!(isSame!S, PullSource, PeekSource, PushSource, AllocSource)) {
+				static assert(is(Id!Src == Id!None), "Source interface declared more than once");
+				alias Traits = .Traits!(S, Snk, E, SnkE, UDAs[1 .. $]);
+			} else static if (anySatisfy!(isSame!S, PullSink, PeekSink, PushSink, AllocSink)) {
+				static assert(is(Id!Snk == Id!None), "Sink interface declared more than once");
+				alias Traits = .Traits!(Src, S, SrcE, E, UDAs[1 .. $]);
+			} else {
+				alias Traits = .Traits!(Src, Snk, SrcE, SnkE, UDAs[1 .. $]);
+			}
+		} else {
+			alias Traits = .Traits!(Src, Snk, SrcE, SnkE, UDAs[1 .. $]);
+		}
+	}
+}
+
+package template getTraits(alias S) {
+	alias getTraits = Traits!(None, None, void, void, __traits(getAttributes, S));
+}
+
+unittest {
+	@peekSource!int @(100) @Id!"zombie"() @allocSink!(Id!1)
+	struct Foo {}
+	alias Tr = getTraits!Foo;
+	static assert(areSame!(Tr.Source, PeekSource));
+	static assert(areSame!(Tr.SourceElementType, int));
+	static assert(areSame!(Tr.Sink, AllocSink));
+	static assert(areSame!(Tr.SinkElementType, Id!1));
+}
+
+unittest {
+	@pullSource!int @pushSource!ubyte
+	struct Bar {}
+	static assert(!__traits(compiles, getTraits!Bar)); // source interface specified twice
+}
+
+unittest {
+	@pullSink!double @pushSink!string @peekSink!void
+	struct Baz {}
+	static assert(!__traits(compiles, getTraits!Baz)); // sink interface specified 3x
+}
+
+enum isPullSource(alias S) = areSame!(getTraits!S.Source, PullSource);
+enum isPeekSource(alias S) = areSame!(getTraits!S.Source, PeekSource);
+enum isPushSource(alias S) = areSame!(getTraits!S.Source, PushSource);
+enum isAllocSource(alias S) = areSame!(getTraits!S.Source, AllocSource);
+
+enum isPullSink(alias S) = areSame!(getTraits!S.Sink, PullSink);
+enum isPeekSink(alias S) = areSame!(getTraits!S.Sink, PeekSink);
+enum isPushSink(alias S) = areSame!(getTraits!S.Sink, PushSink);
+enum isAllocSink(alias S) = areSame!(getTraits!S.Sink, AllocSink);
+
+unittest {
+	@pullSource!int @pullSink!bool
+	struct Foo {}
+	static assert( isPullSource!Foo);
+	static assert(!isPeekSource!Foo);
+	static assert(!isPushSource!Foo);
+	static assert(!isAllocSource!Foo);
+	static assert( isPullSink!Foo);
+	static assert(!isPeekSink!Foo);
+	static assert(!isPushSink!Foo);
+	static assert(!isAllocSink!Foo);
+}
+
+enum isPassiveSource(alias S) = isPeekSource!S || isPullSource!S;
+enum isActiveSource(alias S) = isPushSource!S || isAllocSource!S;
+enum isSource(alias S) = isPassiveSource!S || isActiveSource!S;
+
+enum isPassiveSink(alias S) = isPushSink!S || isAllocSink!S;
+enum isActiveSink(alias S) = isPeekSink!S || isPullSink!S;
+enum isSink(alias S) = isPassiveSink!S || isActiveSink!S;
+
+version(none):
+
 import flod.meta : isType, ReplaceWithMask, str;
 
 private struct DummyPullSource {

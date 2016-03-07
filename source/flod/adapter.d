@@ -6,6 +6,8 @@
  */
 module flod.adapter;
 
+version(none):
+
 import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
 import flod.traits;
 
