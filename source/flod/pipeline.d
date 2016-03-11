@@ -38,9 +38,9 @@ version(unittest) {
 	@pullSource!int
 	struct TestPullSource {
 		mixin TestStage;
-		size_t pull(T)(T[] buf)
+		size_t pull(int[] buf)
 		{
-			buf[] = T.init;
+			buf[] = int.init;
 			return buf.length;
 		}
 	}
@@ -319,6 +319,53 @@ version(unittest) {
 		size_t commit(size_t n) { return sink.push(new int[n]); }
 	}
 
+	@allocSink!int @pullSource!int
+	struct TestAllocPullFilter(alias Scheduler) {
+		mixin Scheduler;
+		mixin TestStage;
+
+		bool alloc(ref int[] buf, size_t n)
+		{
+			if (yield())
+				return false;
+			buf.length = n;
+			return true;
+		}
+
+		size_t commit(size_t n) { return n; }
+
+		size_t pull(int[] buf)
+		{
+			if (yield())
+				return 0;
+			return buf.length;
+		}
+	}
+
+	@allocSink!int @peekSource!int
+	struct TestAllocPeekFilter(alias Scheduler) {
+		mixin Scheduler;
+		mixin TestStage;
+
+		bool alloc(ref int[] buf, size_t n)
+		{
+			if (yield())
+				return 0;
+			buf.length = n;
+			return true;
+		}
+
+		size_t commit(size_t n) { return n; }
+
+		const(int)[] peek(size_t n)
+		{
+			if (yield())
+				return null;
+			return new int[n];
+		}
+
+		void consume(size_t n) {}
+	}
 }
 
 void constructInPlace(T, Args...)(ref T t, auto ref Args args)
@@ -405,12 +452,12 @@ struct SinkDrivenFiberScheduler {
 
 	int yield()
 	{
-		if (Fiber.getThis()) {
+		if (fiber is null)
+			return 2;
+		if (fiber.state == Fiber.State.EXEC) {
 			Fiber.yield();
 			return fiber is null;
 		} else {
-			if (fiber is null)
-				return 2;
 			if (fiber.state == Fiber.State.HOLD)
 				fiber.call();
 			return fiber.state != Fiber.State.HOLD;
@@ -792,8 +839,7 @@ unittest {
 		.pipe!TestAllocSink(Arg!TestAllocSink());
 }
 
-unittest
-{
+unittest {
 	// active to passive, simple
 	pipe!TestPushSource(Arg!TestPushSource())
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
@@ -803,6 +849,16 @@ unittest
 		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
 		.pipe!TestPeekSink(Arg!TestPeekSink());
 
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+}
+
+unittest {
 	// longer passive source chain
 	pipe!TestPushSource(Arg!TestPushSource())
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
@@ -813,7 +869,9 @@ unittest
 		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
 		.pipe!TestPushFilter(Arg!TestPushFilter())
 		.pipe!TestPushSink(Arg!TestPushSink());
+}
 
+unittest {
 	// longer active source chain
 	pipe!TestPushSource(Arg!TestPushSource())
 		.pipe!TestPushFilter(Arg!TestPushFilter())
@@ -827,4 +885,41 @@ unittest
 		.pipe!TestPushFilter(Arg!TestPushFilter())
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullSink(Arg!TestPullSink());
+}
+
+unittest {
+	// multiple inverters
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestAllocSource(Arg!TestAllocSource())
+//		.pipe!TestAllocFilter(Arg!TestAllocFilter()) // FIXME: only this causes compilation error
+		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+/+ // FIXME: doesn't compile
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
+		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	// FIXME: compiles, but segfaults.
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
+		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
+		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());+/
 }
