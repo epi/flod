@@ -26,8 +26,6 @@ import std.experimental.allocator.mallocator : Mallocator;
 /// A buffer that discards all data written to it and always returns empty slice.
 struct NullBuffer {
 private:
-	import flod.meta : NonCopyable;
-	mixin NonCopyable;
 	void[] buffer;
 public:
 	~this() { Mallocator.instance.deallocate(buffer); }
@@ -55,6 +53,12 @@ private:
 	size_t allocOffset;
 	Allocator allocator;
 
+	invariant {
+		assert(peekOffset <= allocOffset);
+		assert(allocOffset <= buffer.length);
+	}
+
+public:
 	this()(auto ref Allocator allocator, size_t initialSize = 0)
 	{
 		import flod.meta : moveIfNonCopyable;
@@ -63,12 +67,11 @@ private:
 			buffer = allocator.allocate(allocator.goodSize(initialSize));
 	}
 
-	invariant {
-		assert(peekOffset <= allocOffset);
-		assert(allocOffset <= buffer.length);
+	this(this)
+	{
+		assert(buffer == null);
 	}
 
-public:
 	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
 	T[] alloc(T)(size_t n)
 	{

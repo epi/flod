@@ -7,14 +7,37 @@
 module flod.pipeline;
 
 import flod.traits;
-import flod.meta : isCopyable, NonCopyable, moveIfNonCopyable;
-import std.experimental.allocator : make, dispose;
+import flod.meta : NonCopyable, str;
+
 
 version(unittest) {
 	// sources:
+	struct Arg(alias T) { bool constructed = false; }
+
+	mixin template TestStage(N...) {
+		alias This = typeof(this);
+		static if (is(This == A!(B, C), alias A, B, C))
+			alias Stage = A;
+		else static if (is(This == D!(E), alias D, E))
+			alias Stage = D;
+		else static if (is(This == F!G, alias F, alias G))
+			alias Stage = F;
+		else static if (is(This))
+			alias Stage = This;
+		else
+			static assert(0, "don't know how to get stage from " ~ This.stringof ~ " (" ~ str!This ~ ")");
+
+		@disable this(this);
+		@disable void opAssign(typeof(this));
+
+		// this is to ensure that construct() calls the right constructor for each stage
+		this(Arg!Stage arg) { this.arg = arg; this.arg.constructed = true; }
+		Arg!Stage arg;
+	}
 
 	@pullSource!int
 	struct TestPullSource {
+		mixin TestStage;
 		size_t pull(T)(T[] buf)
 		{
 			buf[] = T.init;
@@ -24,17 +47,14 @@ version(unittest) {
 
 	@peekSource!int
 	struct TestPeekSource {
+		mixin TestStage;
 		const(int)[] peek(size_t n) { return new int[n]; }
 		void consume(size_t n) {}
 	}
 
 	@pushSource!int
 	struct TestPushSource(Sink) {
-		this()(auto ref Sink sink, ulong dummy = 0)
-		{
-			this.sink = moveIfNonCopyable(sink);
-			this.dummy = dummy;
-		}
+		mixin TestStage;
 		Sink sink;
 		ulong dummy;
 		const(int)[1] blob;
@@ -47,6 +67,7 @@ version(unittest) {
 
 	@allocSource!int
 	struct TestAllocSource(Sink) {
+		mixin TestStage;
 		Sink sink;
 		string dummy;
 		ulong unused;
@@ -68,6 +89,7 @@ version(unittest) {
 
 	@pullSink!int
 	struct TestPullSink(Source) {
+		mixin TestStage;
 		Source source;
 		int a = 1337;
 
@@ -83,21 +105,24 @@ version(unittest) {
 
 	@peekSink!int
 	struct TestPeekSink(Source) {
-		Source s;
+		mixin TestStage;
+		Source source;
 		void run()
 		{
-			auto buf = s.peek(10);
-			s.consume(buf.length);
+			auto buf = source.peek(10);
+			source.consume(buf.length);
 		}
 	}
 
 	@pushSink!int
 	struct TestPushSink {
+		mixin TestStage;
 		size_t push(const(int)[] buf) { return buf.length - 1; }
 	}
 
 	@allocSink!int
 	struct TestAllocSink {
+		mixin TestStage;
 		bool alloc(ref int[] buf, size_t n) { buf = new int[n]; return true; }
 		size_t commit(size_t n) { return n - 1; }
 	}
@@ -106,6 +131,7 @@ version(unittest) {
 
 	@peekSink!int @peekSource!int
 	struct TestPeekFilter(Source) {
+		mixin TestStage;
 		Source source;
 		const(int)[] peek(size_t n) { return source.peek(n); }
 		void consume(size_t n) { source.consume(n); }
@@ -113,6 +139,7 @@ version(unittest) {
 
 	@peekSink!int @pullSource!int
 	struct TestPeekPullFilter(Source) {
+		mixin TestStage;
 		Source source;
 		size_t pull(int[] buf)
 		{
@@ -125,6 +152,7 @@ version(unittest) {
 
 	@peekSink!int @pushSource!int
 	struct TestPeekPushFilter(Source, Sink) {
+		mixin TestStage;
 		Source source;
 		Sink sink;
 		void run()()
@@ -140,6 +168,7 @@ version(unittest) {
 
 	@peekSink!int @allocSource!int
 	struct TestPeekAllocFilter(Source, Sink) {
+		mixin TestStage;
 		Source source;
 		Sink sink;
 		void run()()
@@ -158,12 +187,14 @@ version(unittest) {
 
 	@pullSink!int @pullSource!int
 	struct TestPullFilter(Source) {
+		mixin TestStage;
 		Source source;
 		size_t pull(int[] buf) { return source.pull(buf); }
 	}
 
 	@pullSink!int @peekSource!int
 	struct TestPullPeekFilter(Source) {
+		mixin TestStage;
 		Source source;
 		const(int)[] peek(size_t n)
 		{
@@ -176,6 +207,7 @@ version(unittest) {
 
 	@pullSink!int @pushSource!int
 	struct TestPullPushFilter(Source, Sink) {
+		mixin TestStage;
 		Source source;
 		Sink sink;
 		void run()()
@@ -191,6 +223,7 @@ version(unittest) {
 
 	@pullSink!int @allocSource!int
 	struct TestPullAllocFilter(Source, Sink) {
+		mixin TestStage;
 		Source source;
 		Sink sink;
 		void run()()
@@ -208,12 +241,14 @@ version(unittest) {
 
 	@pushSink!int @pushSource!int
 	struct TestPushFilter(Sink) {
+		mixin TestStage;
 		Sink sink;
 		size_t push(const(int)[] buf) { return sink.push(buf); }
 	}
 
 	@pushSink!int @allocSource!int
 	struct TestPushAllocFilter(Sink) {
+		mixin TestStage;
 		Sink sink;
 		size_t push(const(int)[] buf)
 		{
@@ -226,200 +261,368 @@ version(unittest) {
 	}
 
 	@pushSink!int @pullSource!int
-	struct TestPushPullFilter(Scheduler) {
-		Scheduler scheduler;
+	struct TestPushPullFilter(alias Scheduler) {
+		mixin Scheduler;
+		mixin TestStage;
 
 		size_t push(const(int)[] buf)
 		{
-			if (!scheduler.sourceYield())
+			if (yield())
 				return 0;
 			return buf.length;
 		}
-		size_t pull(T)(T[] buf)
+
+		size_t pull(int[] buf)
 		{
-			if (!scheduler.sinkYield())
+			if (yield())
 				return 0;
-			buf[] = T.init;
+			buf[] = int.init;
 			return buf.length;
 		}
 	}
 
+	@pushSink!int @peekSource!int
+	struct TestPushPeekFilter(alias Scheduler) {
+		mixin Scheduler;
+		mixin TestStage;
+
+		size_t push(const(int)[] buf)
+		{
+			if (yield())
+				return 0;
+			return buf.length;
+		}
+
+		const(int)[] peek(size_t n)
+		{
+			if (yield())
+				return null;
+			return new int[n];
+		}
+
+		void consume(size_t n) {}
+	}
+
+	@allocSink!int @allocSource!int
+	struct TestAllocFilter(Sink) {
+		mixin TestStage;
+		Sink sink;
+		bool alloc(ref int[] buf, size_t n) { return sink.alloc(buf, n); }
+		size_t commit(size_t n) { return sink.commit(n); }
+	}
+
+	@allocSink!int @pushSource!int
+	struct TestAllocPushFilter(Sink) {
+		mixin TestStage;
+		Sink sink;
+		bool alloc(ref int[] buf, size_t n) { buf = new int[n]; return true; }
+		size_t commit(size_t n) { return sink.push(new int[n]); }
+	}
+
 }
 
-import std.range : isInputRange;
-import std.traits : isDynamicArray;
-
-import flod.meta : str;
-
-private struct ImmediatePipeline(alias Stage, E, Source = void)
-	if (isImmediatePipeline!Source || is(Source == void))
+void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 {
-	static if (is(Stage))
-		private Stage impl;
+	debug(FlodTraceLifetime) {
+		import std.experimental.logger : tracef;
+		tracef("Construct %s with %s", T.name, Args.stringof);
+	}
+	static if (__traits(hasMember, t, "__ctor")) {
+		t.__ctor(args);
+	} else static if (Args.length > 0) {
+		static assert(0, "Stage " ~ str!T ~ " does not have a non-trivial constructor" ~
+			" but construction was requested with arguments " ~ Args.stringof);
+	}
+}
+
+template repeat(int id, string s) {
+	static if (id == 0)
+		enum repeat = "";
 	else
-		private Stage!Source impl;
-	alias ElementType = E;
-
-	static if (is(Stage)) {
-		this(Args...)(auto ref Args args) {
-			this.impl = Stage(args);
-		}
-	} else {
-		this(Args...)(auto ref Source source, auto ref Args args) {
-			this.impl = Stage!Source(source, args);
-		}
-	}
-
-	static if (isPullSource!Stage) {
-		size_t pull(E[] buf) { return impl.pull(buf); }
-	} else static if (isPeekSource!Stage) {
-		const(E)[] peek(size_t n) { return impl.peek(n); }
-		void consume(size_t n) { impl.consume(n); }
-	}
+		enum repeat = s ~ repeat!(id - 1, s);
 }
 
-private struct ImmediatePipeline(alias Stage, E, Source)
-	if (isDeferredRunnablePipeline!Source)
-{
-	import std.experimental.allocator.mallocator : Mallocator;
-	import flod.meta : NonCopyable;
-	mixin NonCopyable;
-
-	alias ElementType = E;
-	alias SourcePipeline = typeof({ Source s; Stage!Scheduler t; return s.create(t); }());
-	SourcePipeline* sourcePipeline;
-
-	static struct Scheduler {
-		import std.stdio;
+template Inverter(T) {
+	@pullSource!T
+	struct Inverter(Source) {
 		import core.thread : Fiber;
-		Fiber fiber;
-		mixin NonCopyable;
+
+		Source source;
 
 		~this()
 		{
+			source.scheduler.stop();
 		}
 
-		void stop() {
-			if (fiber) {
-				if (fiber.state == Fiber.State.HOLD) {
-					auto f = fiber;
-					this.fiber = null;
-					f.call();
-					assert(f.state == Fiber.State.TERM);
-				}
+		void run()
+		{
+			source.run();
+		}
+
+		size_t pull()(T[] buf) {
+			if (!source.scheduler.fiber)
+				source.scheduler.fiber = new Fiber(&run);
+			return source.sink.pull(buf);
+		}
+
+		const(T)[] peek()(size_t n) {
+			if (!source.scheduler.fiber)
+				source.scheduler.fiber = new Fiber(&run);
+			return source.sink.peek(n);
+		}
+
+		void consume()(size_t n) { source.sink.consume(n); }
+	}
+}
+
+mixin template FiberScheduler() {
+	import flod.pipeline;
+	SinkDrivenFiberScheduler _flod_scheduler;
+
+	int yield() {
+		return _flod_scheduler.yield();
+	}
+}
+
+struct SinkDrivenFiberScheduler {
+	import std.stdio;
+	import core.thread : Fiber;
+	Fiber fiber;
+	mixin NonCopyable;
+
+	void stop()
+	{
+		auto f = this.fiber;
+		if (f) {
+			if (f.state == Fiber.State.HOLD) {
+				this.fiber = null;
+				f.call();
 			}
+			auto x = f.state;
+			assert(f.state == Fiber.State.TERM);
 		}
-		void setup(void delegate() dgrun)
-		{
-			assert(fiber is null);
-			fiber = new Fiber(dgrun);
-		}
+	}
 
-		bool sourceYield()
-		{
-			import core.thread : Fiber;
+	int yield()
+	{
+		if (Fiber.getThis()) {
 			Fiber.yield();
 			return fiber is null;
-		}
-
-		bool sinkYield()
-		{
-			fiber.call();
-			return fiber.state == Fiber.State.HOLD;
+		} else {
+			if (fiber is null)
+				return 2;
+			if (fiber.state == Fiber.State.HOLD)
+				fiber.call();
+			return fiber.state != Fiber.State.HOLD;
 		}
 	}
+}
 
-	this(Args...)(auto ref Source source, auto ref Args args) {
-		sourcePipeline = source.create(Mallocator.instance, Stage!Scheduler());
-		static if (is(typeof(&sourcePipeline.run!())))
-			auto dg = &sourcePipeline.run!();
-		else
-			auto dg = &sourcePipeline.run;
-		sourcePipeline.sink.scheduler.setup(dg);
+private struct StageWrapper(S) {
+	enum name = .str!S;
+	S _impl;
+	this(Args...)(auto ref Args args)
+	{
+		static if (Args.length > 0)
+			_impl.__ctor(args);
 	}
-
 	~this()
 	{
-		if (sourcePipeline) {
-			sourcePipeline.sink.scheduler.stop();
-			Mallocator.instance.dispose(sourcePipeline);
-			sourcePipeline = null;
+		debug(FlodTraceLifetime) {
+			import std.experimental.logger : tracef;
+			tracef("Destroy %s", name);
+		}
+	}
+	@property ref auto sink()() { return _impl.sink; }
+	@property ref auto source()() { return _impl.source; }
+	auto peek()(size_t n) { return _impl.peek(n); }
+	void consume()(size_t n) { _impl.consume(n); }
+	auto pull(T)(T[] buf)
+	{
+		static if (__traits(compiles, _impl.pull(buf)))
+			return _impl.pull(buf);
+		else
+			return _impl.sink.pull(buf);
+	}
+	auto run()() { return _impl.run(); }
+	auto step(A...)(auto ref A a) { return _impl.step(a); }
+	auto alloc(T)(ref T[] buf, size_t n) { return _impl.alloc(buf, n); }
+	auto commit()(size_t n) { return _impl.commit(n); }
+	auto push(T)(const(T)[] buf) { return _impl.push(buf); }
+	@property ref auto scheduler()() {
+		static if (__traits(compiles, _impl.sink.scheduler))
+			return _impl.sink.scheduler;
+		else static if (__traits(compiles, _impl._flod_scheduler))
+			return _impl._flod_scheduler;
+		else
+			static assert(0, .str!S ~ " has no scheduler");
+	}
+}
+
+private struct Pipeline(alias S, SoP, SiP, A...) {
+	alias Stage = S;
+	alias Args = A;
+	alias SourcePipeline = SoP;
+	alias SinkPipeline = SiP;
+
+	enum bool hasSource = !is(SourcePipeline == typeof(null));
+	enum bool hasSink   = !is(SinkPipeline == typeof(null));
+
+	static if (hasSource) {
+		alias FirstStage = SourcePipeline.FirstStage;
+		enum sourcePipeStr = SourcePipeline.pipeStr ~ "->";
+		enum sourceTreeStr(int indent) = SourcePipeline.treeStr!(indent + 1) ~ "\n";
+		enum sourceStr = SourcePipeline.str ~ ".";
+	} else {
+		alias FirstStage = Stage;
+		enum sourcePipeStr = "";
+		enum sourceTreeStr(int indent) = "";
+		enum sourceStr = "";
+	}
+
+	static if (hasSink) {
+		alias LastStage = SinkPipeline.LastStage;
+		enum sinkPipeStr = "->" ~ SinkPipeline.pipeStr;
+		enum sinkTreeStr(int indent) = "\n" ~ SinkPipeline.treeStr!(indent + 1);
+		enum sinkStr = "." ~ SinkPipeline.str;
+	} else {
+		alias LastStage = Stage;
+		enum sinkPipeStr = "";
+		enum sinkTreeStr(int indent) = "";
+		enum sinkStr = "";
+	}
+
+	static if (is(Traits!LastStage.SourceElementType W))
+		alias ElementType = W;
+
+	enum pipeStr = sourcePipeStr ~ .str!S ~ sinkPipeStr;
+
+	enum treeStr(int indent) = sourceTreeStr!indent
+		~ "|" ~ repeat!(indent, "-") ~ "-" ~ .str!S
+		~ sinkTreeStr!indent;
+
+	enum str = "(" ~ sourceStr ~ .str!Stage ~ sinkStr ~ ")";
+
+	static if (hasSink && is(SinkPipeline.Type T))
+		alias SinkType = T;
+	static if (hasSource && is(SourcePipeline.Type U))
+		alias SourceType = U;
+
+	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
+		alias Type = StageWrapper!(Stage!(SourceType, SinkType));
+	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
+		alias Type = StageWrapper!(Stage!SinkType);
+	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
+		alias Type = StageWrapper!(Stage!SourceType);
+	else static if (isPassiveSink!Stage && isPassiveSource!Stage && is(Stage!FiberScheduler SF))
+		alias Type = StageWrapper!SF;
+	else static if (is(Stage))
+		alias Type = StageWrapper!Stage;
+	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // wrappers
+		alias Type = StageWrapper!(Stage!SourceType);
+
+	SourcePipeline sourcePipeline;
+	SinkPipeline sinkPipeline;
+	Args args;
+
+	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
+	{
+		alias SourceE = Traits!LastStage.SourceElementType;
+		alias SinkE = Traits!NextStage.SinkElementType;
+		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
+			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
+			.str!NextStage ~ " expects " ~ SinkE.stringof);
+
+		debug alias X = whatIsAppended!(Pipeline, NextStage);
+
+		static if (isPassiveSource!Stage) {
+			auto result = pipeline!NextStage(this, null, nextArgs);
+		} else {
+			static assert(isActiveSource!Stage);
+			static if (isPassiveSink!NextStage && isPassiveSource!NextStage) {
+				static if (isPassiveSink!Stage) {
+					static assert(!hasSource);
+					static if (hasSink) {
+						auto result = pipeline!Stage(null, sinkPipeline.pipe!NextStage(nextArgs), args);
+					} else {
+						auto result = pipeline!Stage(null, pipeline!NextStage(null, null, nextArgs), args);
+					}
+				} else {
+					static if (hasSink) {
+						auto result = pipeline!(Inverter!SourceE)(
+							pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args),
+							null);
+					} else {
+						auto result = pipeline!(Inverter!SourceE)(
+							pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args),
+							null);
+					}
+				}
+			} else {
+				static if (hasSink)
+					auto result = pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args);
+				else
+					auto result = pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args);
+			}
+		}
+		static if (isSource!NextStage || isSink!FirstStage)
+			return result;
+		else
+			result.run();
+	}
+
+	static if (is(Type)) {
+		void construct()(ref Type t)
+		{
+			static if (hasSource)
+				sourcePipeline.construct(t.source);
+			static if (hasSink)
+				sinkPipeline.construct(t.sink);
+			constructInPlace(t, args);
 		}
 	}
 
-	static if (isPullSource!Stage) {
-		size_t pull(E[] buf) { return sourcePipeline.sink.pull(buf); }
-	} else static if (isPeekSource!Stage) {
-		const(E)[] peek(size_t n) { return sourcePipeline.sink.peek(n); }
-		void consume(size_t n) { sourcePipeline.sink.consume(n); }
+	static if (!isSink!FirstStage && !isSource!LastStage) {
+		void run()()
+		{
+			Type t;
+			construct(t);
+			t.run();
+		}
+	}
+
+	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
+		auto create()()
+		{
+			Type t;
+			construct(t);
+			return t;
+		}
 	}
 }
 
-private struct DeferredRunnablePipeline(alias Stage, E, Source, Args...) {
-	static if (!is(Source == void))
-		private Source source;
-	private Args args;
-
-	alias ElementType = E;
-
-	auto create(Sink)(auto ref Sink sink)
-	{
-		static if (is(Source == void))
-			return Stage!Sink(moveIfNonCopyable(sink), args);
-		else static if (isImmediatePipeline!Source)
-			return Stage!(Source, Sink)(moveIfNonCopyable(source), moveIfNonCopyable(sink), args);
-		else static if (isDeferredRunnablePipeline!Source)
-			return source.create(Stage!Sink(moveIfNonCopyable(sink), args));
-	}
-
-	auto create(Allocator, Sink)(auto ref Allocator allocator, auto ref Sink sink)
-	{
-		static if (is(Source == void))
-			return allocator.make!(Stage!Sink)(moveIfNonCopyable(sink), args);
-		else static if (isImmediatePipeline!Source)
-			return allocator.make!(Stage!(Source, Sink))(moveIfNonCopyable(source), moveIfNonCopyable(sink), args);
-		else static if (isDeferredRunnablePipeline!Source)
-			return source.create(allocator, Stage!Sink(moveIfNonCopyable(sink), args));
-	}
+auto pipeline(alias Stage, SoP, SiP, A...)(auto ref SoP sourcePipeline, auto ref SiP sinkPipeline, auto ref A args)
+{
+	return Pipeline!(Stage, SoP, SiP, A)(sourcePipeline, sinkPipeline, args);
 }
 
-///
-template isDeferredRunnablePipeline(P, alias test) {
-	static if (is(P == DeferredRunnablePipeline!A, A...))
-		enum isDeferredRunnablePipeline = test!(A[0]);
+template isPipeline(P, alias test) {
+	static if (is(P == Pipeline!A, A...))
+		enum isPipeline = test!(P.LastStage);
 	else
-		enum isDeferredRunnablePipeline = false;
+		enum isPipeline = false;
 }
 
-///
-template isImmediatePipeline(P, alias test) {
-	static if (is(P == ImmediatePipeline!A, A...))
-		enum isImmediatePipeline = test!(A[0]);
-	else
-		enum isImmediatePipeline = false;
-}
+enum isPeekPipeline(P) = isPipeline!(P, isPeekSource);
 
-///
-enum isImmediatePipeline(P) = is(P == ImmediatePipeline!A, A...);
+enum isPullPipeline(P) = isPipeline!(P, isPullSource);
 
-///
-enum isDeferredRunnablePipeline(P) = is(P == DeferredRunnablePipeline!A, A...);
+enum isPushPipeline(P) = isPipeline!(P, isPushSource);
 
+enum isAllocPipeline(P) = isPipeline!(P, isAllocSource);
 
-///
-enum isPeekPipeline(P) = isImmediatePipeline!(P, isPeekSource);
-
-///
-enum isPullPipeline(P) = isImmediatePipeline!(P, isPullSource);
-
-///
-enum isPushPipeline(P) = isDeferredRunnablePipeline!(P, isPushSource);
-
-///
-enum isAllocPipeline(P) = isDeferredRunnablePipeline!(P, isAllocSource);
-
-///
 enum isPipeline(P) = isPushPipeline!P || isPullPipeline!P || isPeekPipeline!P || isAllocPipeline!P;
+
 
 // this is only used to check if all possible tuples (pipeline, stage sink, stage source) are tested
 debug private struct PrintWia(string a, string b, string c) {
@@ -475,154 +678,153 @@ private template whatIsAppended(P, alias S, string file = __FILE__) {
 	}
 }
 
-/**
-Start building a new pipeline, adding `Stage` as its source _stage.
-
-If `Stage` is an active source, the type of its sink is not known at this point and therefore it is not
-constructed immediately. Instead, `args` are saved and will be used to construct `Stage!Sink` as
-soon as type of `Sink` is known.
-
-Params:
-Stage = source to be added as first _stage of the new pipeline.
-args  = arguments passed to Stage constructor.
-*/
 auto pipe(alias Stage, Args...)(auto ref Args args)
-	if (!isSink!Stage && isSource!Stage)
-{
-	return startPipe!Stage(args);
-}
-
-private auto startPipe(alias Stage, Args...)(auto ref Args args)
-	if (!isSink!Stage && isSource!Stage)
+	if (isSink!Stage || isSource!Stage)
 {
 	alias X = whatIsAppended!(void, Stage);
-	alias E = getTraits!Stage.SourceElementType;
-	static if (isPassiveSource!Stage)
-		return ImmediatePipeline!(Stage, E, void)(args);
-	else static if (isActiveSource!Stage)
-		return DeferredRunnablePipeline!(Stage, E, void, Args)(args);
-	else
-		static assert(0);
+	return pipeline!Stage(null, null, args);
 }
 
 unittest {
-	auto p1 = pipe!TestPeekSource;
-	pragma(msg, typeof(p1).stringof);
+	auto p1 = pipe!TestPeekSource(Arg!TestPeekSource());
 	static assert(isPeekPipeline!(typeof(p1)));
 	static assert(is(p1.ElementType == int));
-	auto p2 = pipe!TestPullSource;
+	auto p2 = pipe!TestPullSource(Arg!TestPullSource());
 	static assert(isPullPipeline!(typeof(p2)));
 	static assert(is(p2.ElementType == int));
 }
 
 unittest {
-	auto p1 = pipe!TestPushSource(0xdeadUL);
+	auto p1 = pipe!TestPushSource(Arg!TestPushSource());
 	static assert(isPushPipeline!(typeof(p1)));
-	auto p1a = p1.create(TestPushSink());
-	p1a.run();
-	auto p2 = pipe!TestAllocSource("foo", true);
+	auto p2 = pipe!TestAllocSource(Arg!TestAllocSource());
 	static assert(isAllocPipeline!(typeof(p2)));
-	auto p2a = p2.create(TestAllocSink());
-	p2a.run();
-}
-
-/**
-Append `Stage` to `pipeline`.
-
-Params:
- Stage = a `struct` or `class` template parameterized by its source type. `Stage` will be
-         instantiated with `Pipeline` as template argument. `Stage` constructor
-         must accept the following order of arguments: `(pipeline, args)`.
- pipeline = a pipeline ending with a passive (peek/consume or pull) source.
- args = additional arguments to `Stage` constructor.
-Returns: `Stage!Pipeline(pipeline, args)`.
-`pipeline` is moved if non-copyable.
-*/
-auto pipe(alias Stage, P, Args...)(auto ref P pipeline, auto ref Args args)
-	if (isPipeline!P && isSink!Stage)
-{
-	debug alias X = whatIsAppended!(P, Stage);
-	alias E = getTraits!Stage.SinkElementType;
-	static assert(is(P.ElementType == E),
-		"Incompatible types: " ~ str!(Pipeline.ElementType) ~ " vs. " ~ str!E);
-	return pipeline.appendPipe!Stage(args);
-}
-
-auto appendPipe(alias Stage, P, Args...)(auto ref P pipeline, auto ref Args args)
-	if (isPipeline!P && isSink!Stage && !isSource!Stage)
-{
-	static if (isPushPipeline!P) {
-		static if (isPushSink!Stage) {
-			pipeline.create(Stage(args)).run();
-		} else
-			static assert(0, "not implemented");
-	} else static if (isAllocPipeline!P) {
-		static if (isAllocSink!Stage) {
-			pipeline.create(Stage(args)).run();
-		} else
-			static assert(0, "not implemented");
-	} else static if (isPullPipeline!P) {
-		static if (isPullSink!Stage) {
-			Stage!P(moveIfNonCopyable(pipeline), args).run();
-		} else
-			static assert(0, "not implemented");
-	} else static if (isPeekPipeline!P) {
-		static if (isPeekSink!Stage) {
-			Stage!P(moveIfNonCopyable(pipeline), args).run();
-		} else
-			static assert(0, "not implemented");
-	}
 }
 
 unittest {
-	pipe!TestPeekSource.pipe!TestPeekSink;
-	pipe!TestPullSource.pipe!TestPullSink;
-	pipe!TestPushSource.pipe!TestPushSink;
-	pipe!TestAllocSource.pipe!TestAllocSink;
-}
-
-auto appendPipe(alias Stage, P, Args...)(auto ref P pipeline, auto ref Args args)
-	if (isPipeline!P && isSink!Stage && isSource!Stage)
-{
-	alias E = getTraits!Stage.SourceElementType;
-	static if (isImmediatePipeline!P) {
-		static if (isActiveSink!Stage) {
-			static if (isPassiveSource!Stage)
-				return ImmediatePipeline!(Stage, E, P)(moveIfNonCopyable(pipeline), args);
-			else // active source
-				return DeferredRunnablePipeline!(Stage, E, P, Args)(moveIfNonCopyable(pipeline), args);
-		} else { // passive sink
-			static assert(0, "not implemented");
-		}
-	} else { // deferred pipeline
-		static if (isPassiveSink!Stage) {
-			static if (isActiveSource!Stage)
-				return DeferredRunnablePipeline!(Stage, E, P, Args)(moveIfNonCopyable(pipeline), args);
-			else // passive source
-				return ImmediatePipeline!(Stage, E, P)(moveIfNonCopyable(pipeline), args);
-		} else { // active sink
-			static assert(0, "not implemented");
-		}
-	}
+	// compatible source - sink pairs
+	pipe!TestPeekSource(Arg!TestPeekSource()).pipe!TestPeekSink(Arg!TestPeekSink());
+	pipe!TestPullSource(Arg!TestPullSource()).pipe!TestPullSink(Arg!TestPullSink());
+	pipe!TestPushSource(Arg!TestPushSource()).pipe!TestPushSink(Arg!TestPushSink());
+	pipe!TestAllocSource(Arg!TestAllocSource()).pipe!TestAllocSink(Arg!TestAllocSink());
 }
 
 unittest {
-	pipe!TestPeekSource.pipe!TestPeekFilter.pipe!TestPeekSink;
-	pipe!TestPeekSource.pipe!TestPeekFilter.pipe!TestPeekFilter.pipe!TestPeekSink;
-	pipe!TestPeekSource.pipe!TestPeekFilter.pipe!TestPeekPullFilter.pipe!TestPullSink;
+	// just one active sink at the end
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+}
 
-	pipe!TestPullSource.pipe!TestPullFilter.pipe!TestPullSink;
-	pipe!TestPullSource.pipe!TestPullFilter.pipe!TestPullFilter.pipe!TestPullSink;
-	pipe!TestPullSource.pipe!TestPullFilter.pipe!TestPullPeekFilter.pipe!TestPeekSink;
+unittest {
+	// just one active source at the beginning
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
 
-	pipe!TestPeekSource.pipe!TestPeekPushFilter.pipe!TestPushSink;
-	pipe!TestPeekSource.pipe!TestPeekAllocFilter.pipe!TestAllocSink;
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
 
-	pipe!TestPullSource.pipe!TestPullPushFilter.pipe!TestPushSink;
-	pipe!TestPullSource.pipe!TestPullAllocFilter.pipe!TestAllocSink;
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
 
-	pipe!TestPushSource.pipe!TestPushFilter.pipe!TestPushSink;
-	pipe!TestPushSource.pipe!TestPushAllocFilter.pipe!TestAllocSink;
+	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+}
 
-	pipe!TestPushSource.pipe!TestPushPullFilter.pipe!TestPullSink;
+unittest {
+	// passive to active
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+}
+
+unittest {
+	// passive to active, longer chains
+	// pull - peek - alloc - push
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
+		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
+		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	// peek - pull - push - alloc
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
+		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+}
+
+unittest
+{
+	// active to passive, simple
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	// longer passive source chain
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	// longer active source chain
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
 }

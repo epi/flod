@@ -6,86 +6,65 @@
  */
 module flod.adapter;
 
-version(none):
-
 import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
 import flod.traits;
 
-template PullElementType(Source, Default) {
-	static if (is(FixedPullType!Source F))
-		alias PullElementType = F;
-	else
-		alias PullElementType = Default;
-}
-
-template isPullable(Source, ElementType) {
-	static if (is(FixedPullType!Source F))
-		enum isPullable = is(ElementType == F);
-	else
-		enum isPullable = true;
-}
-
-private template DefaultPullPeekAdapter(Buffer)
+private template DefaultPullPeekAdapter(Buffer, E)
 {
+	@pullSink!E @peekSource!E
 	struct DefaultPullPeekAdapter(Source) {
-	private:
-		import std.stdio;
-
 		Source source;
 		Buffer buffer;
 
-		alias ElementType = PullElementType!(Source, ubyte);
-
-	package:
-		this()(auto ref Source source, auto ref Buffer buffer)
+		this()(auto ref Buffer buffer)
 		{
 			import flod.meta : moveIfNonCopyable;
-			this.source = moveIfNonCopyable(source);
 			this.buffer = moveIfNonCopyable(buffer);
 		}
 
-	public:
-		const(T)[] peek(T = ElementType)(size_t size)
-			if (isPullable!(Source, T))
+		const(E)[] peek(size_t size)
 		{
-			auto ready = buffer.peek!T();
+			auto ready = buffer.peek!E();
 			if (ready.length >= size)
 				return ready;
-			auto chunk = buffer.alloc!T(size - ready.length);
+			auto chunk = buffer.alloc!E(size - ready.length);
 			size_t r = source.pull(chunk);
-			buffer.commit!T(r);
-			return cast(T[]) buffer.peek!T();
+			buffer.commit!E(r);
+			return buffer.peek!E();
 		}
 
-		void consume(T = ElementType)(size_t size)
-			if (isPullable!(Source, T))
+		void consume(size_t size)
 		{
-			buffer.consume!T(size * T.sizeof);
+			buffer.consume!E(size);
 		}
 	}
 }
 
 unittest {
 	import flod.buffer : NullBuffer;
-	static assert(isPeekSource!(DefaultPullPeekAdapter!NullBuffer));
+	static assert(isPeekSource!(DefaultPullPeekAdapter!(NullBuffer, int)));
 }
 
 ///
 auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
 	if (isPullPipeline!Pipeline)
 {
-	return pipeline.pipe!(DefaultPullPeekAdapter!Buffer)(buffer);
+	return pipeline.pipe!(DefaultPullPeekAdapter!(Buffer, Pipeline.ElementType))(buffer);
 }
 
 ///
 auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	if (isPullPipeline!Pipeline)
 {
-	import flod.buffer : mmappedBuffer;
-	return pipeline.pullPeek(mmappedBuffer());
+	import flod.buffer : movingBuffer;
+	return pipeline.pullPeek(movingBuffer());
 }
 
+unittest {
 
+}
+
+/+
 struct DefaultPeekPullAdapter(Source) {
 private:
 	Source source;
@@ -191,120 +170,81 @@ unittest {
 	assert(app.data == iota(0, 1048576).array());
 }
 
-@satisfies!(isPushSink, YieldingPushSink)
-private struct YieldingPushSink {
-	const(void)[] pushed;
-	private void stop() {
-		pushed = (cast(const(void)*) null)[0xdead .. 0xdeaf];
-		assert(pushed !is null);
-	}
++/
 
-	private void more() { pushed = null; }
 
-	size_t push(T)(const(T)[] buf)
-	{
-		import core.thread : Fiber;
-		if (pushed !is null)
-			return 0;
-		pushed = cast(const(void)[]) buf;
-		if (!__ctfe) // hack
-			Fiber.yield();
-		return buf.length;
-	}
-}
+template DefaultPushPullAdapter(Buffer, E) {
+	@pushSink!E @pullSource!E
+	struct DefaultPushPullAdapter(alias Scheduler) {
+		mixin Scheduler;
 
-private struct DefaultPushPullAdapter(Source, Buffer) {
-	import core.thread : Fiber;
-	import flod.meta : NonCopyable, moveIfNonCopyable;
-
-	Source source;
-	Buffer buffer;
-	Fiber fiber;
-
-	this()(auto ref Source source, auto ref Buffer buffer) {
-		this.source = moveIfNonCopyable(source);
-		this.buffer = moveIfNonCopyable(buffer);
-	}
-
-	private T[] pullFromBuffer(T)(T[] dest)
-	{
-		import std.algorithm : min;
-		auto src = buffer.peek!T();
-		auto len = min(src.length, dest.length);
-		if (len > 0) {
-			dest[0 .. len] = src[0 .. len];
-			buffer.consume!T(len);
-			return dest[len .. $];
-		}
-		return dest;
-	}
-
-	private void runSource()
-	{
-		source.run();
-	}
-
-	// FIXME: unsafe, type information is lost between push and pull
-	size_t pull(T)(T[] dest)
-	{
-		size_t requestedLength = dest.length;
-		// first, give off whatever was left from this.pushed on previous pull();
-		dest = pullFromBuffer(dest);
-		if (dest.length == 0)
-			return requestedLength;
-		// if not satisfied yet, switch to source fiber till push() is called again
-		// enough times to fill dest[]
-		auto untyped = cast(void[]) dest;
+		Buffer buffer;
 		const(void)[] pushed;
-		do {
-			import std.algorithm : min;
-			if (fiber is null) {
-				// TODO: fiber is created here, and not in ctor, because the delegate context ptr
-				// would point into the old location (possibly garbage) and it will
-				// fail if "this" is moved or copied :/
-				fiber = new Fiber(&this.runSource);
-			}
-			assert(fiber.state == Fiber.State.HOLD);
-			source.sink.more();
-			fiber.call();
-			if (fiber.state == Fiber.State.TERM) {
-				fiber = null;
-				break;
-			}
-			pushed = source.sink.pushed;
 
-			// pushed is the slice of the original buffer passed to push() by the source.
-			auto len = min(pushed.length, untyped.length);
-			assert(len > 0);
-			untyped.ptr[0 .. len] = pushed[0 .. len];
-			untyped = untyped[len .. $];
-			pushed = pushed[len .. $];
-		} while (untyped.length > 0);
-
-		// whatever's left in pushed, keep it in buffer for the next time pull() is called
-		while (pushed.length > 0) {
-			import std.algorithm : min;
-			auto b = buffer.alloc!void(pushed.length);
-			if (b.length == 0) {
-				import core.exception : OutOfMemoryError;
-				throw new OutOfMemoryError();
-			}
-			auto len = (b.length, pushed.length);
-			b[0 .. len] = pushed[0 .. len];
-			buffer.commit!void(len);
-			pushed = pushed[len .. $];
+		this()(auto ref Buffer buffer) {
+			this.buffer = moveIfNonCopyable(buffer);
 		}
-		return requestedLength - untyped.length / T.sizeof;
-	}
 
-	~this()
-	{
-		if (fiber) {
-			source.sink.stop;
-			fiber.call();
-			assert(fiber !is null);
-			assert(fiber.state == Fiber.State.TERM);
-			fiber = null;
+		size_t push(const(E)[] buf)
+		{
+			if (pushed.length > 0)
+				return 0;
+			pushed = cast(const(void)[]) buf;
+			yield();
+			return buf.length;
+		}
+
+		private E[] pullFromBuffer(E[] dest)
+		{
+			import std.algorithm : min;
+			auto src = buffer.peek!E();
+			auto len = min(src.length, dest.length);
+			if (len > 0) {
+				dest[0 .. len] = src[0 .. len];
+				buffer.consume!E(len);
+				return dest[len .. $];
+			}
+			return dest;
+		}
+
+		// FIXME: unsafe, type information is lost between push and pull
+		size_t pull(E[] dest)
+		{
+			size_t requestedLength = dest.length;
+			// first, give off whatever was left from this.pushed on previous pull();
+			dest = pullFromBuffer(dest);
+			if (dest.length == 0)
+				return requestedLength;
+			// if not satisfied yet, switch to source fiber till push() is called again
+			// enough times to fill dest[]
+			auto untyped = cast(void[]) dest;
+			do {
+				import std.algorithm : min;
+				if (yield())
+					break;
+
+				// pushed is the slice of the original buffer passed to push() by the source.
+				auto len = min(pushed.length, untyped.length);
+				assert(len > 0);
+				untyped.ptr[0 .. len] = pushed[0 .. len];
+				untyped = untyped[len .. $];
+				pushed = pushed[len .. $];
+			} while (untyped.length > 0);
+
+			// whatever's left in pushed, keep it in buffer for the next time pull() is called
+			while (pushed.length > 0) {
+				import std.algorithm : min;
+				auto b = buffer.alloc!void(pushed.length);
+				if (b.length == 0) {
+					import core.exception : OutOfMemoryError;
+					throw new OutOfMemoryError();
+				}
+				auto len = (b.length, pushed.length);
+				b[0 .. len] = pushed[0 .. len];
+				buffer.commit!void(len);
+				pushed = pushed[len .. $];
+			}
+			return requestedLength - untyped.length / E.sizeof;
 		}
 	}
 }
@@ -312,9 +252,9 @@ private struct DefaultPushPullAdapter(Source, Buffer) {
 ///
 auto pushPull(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
 {
-	alias SP = typeof(pipeline.pipe!YieldingPushSink);
-	alias PP = DefaultPushPullAdapter!(SP, Buffer);
-	return PP(pipeline.pipe!YieldingPushSink, buffer);
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultPushPullAdapter!(Buffer, E);
+	return pipeline.pipe!PP(buffer);
 }
 
 ///
@@ -325,61 +265,53 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 }
 
 import flod.meta;
+import flod.traits : pushSource;
 
-unittest {
-	@satisfies!(isPushSource, ArraySource)
-	static struct ArraySource(Sink) {
-		mixin NonCopyable;
-		int[] array;
-		int counter = 1;
+@pushSource!int @check!ArraySource
+static struct ArraySource(Sink) {
+	int[] array;
+	int counter = 1;
 
-		private this(int[] arr) { array = arr; }
-		Sink sink;
+	this(int[] arr) { array = arr; }
+	Sink sink;
 
-		this(Args...)(auto ref Sink sink, auto ref Args args)
-		{
-			this.sink = moveIfNonCopyable(sink);
-			this(args);
-		}
-
-		void run()
-		{
-			while (array.length) {
-				import std.algorithm : min;
-				auto l = min(array.length, counter);
-				assert(l);
-				if (l != sink.push(array[0 .. l]))
-					break;
-				array = array[l .. $];
-				++counter;
-			}
+	void run()
+	{
+		while (array.length) {
+			import std.algorithm : min;
+			auto l = min(array.length, counter);
+			assert(l);
+			if (l != sink.push(array[0 .. l]))
+				break;
+			array = array[l .. $];
+			++counter;
 		}
 	}
-	static assert(!isCopyable!(ArraySource!YieldingPushSink));
+}
+
+unittest {
 
 	import std.range : iota, array;
 	import flod.buffer;
+	import flod.pipeline : pipe;
 
 	auto arr = iota(0, 1048576).array();
 	int[] result;
-	auto buffer = movingBuffer();
-	auto pushsource = pipe!ArraySource(arr.dup);
-	auto pushpipeline = pushsource.create(YieldingPushSink());
-	auto pullsource = DefaultPushPullAdapter!(typeof(pushpipeline), typeof(buffer))(pushpipeline, buffer);
+	auto pl = pipe!ArraySource(arr.dup).pushPull().create();
 	auto n = 100;
 	result.length = n;
-	assert(pullsource.pull(result) == n);
+	assert(pl.pull(result) == n);
 	assert(result[0 .. n] == arr[0 .. n]);
 	arr = arr[n .. $];
 
 	n = 1337;
 	result.length = n;
-	assert(pullsource.pull(result) == n);
+	assert(pl.pull(result) == n);
 	assert(result[0 .. n] == arr[0 .. n]);
 	arr = arr[n .. $];
 
 	n = 4000000;
 	result.length = n;
-	assert(pullsource.pull(result) == arr.length);
+	assert(pl.pull(result) == arr.length);
 	assert(result[0 .. arr.length] == arr[0 .. arr.length]);
 }
