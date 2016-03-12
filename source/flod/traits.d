@@ -6,30 +6,44 @@
  */
 module flod.traits;
 
+import flod.meta : str;
+
 struct PullSource(E) {
 	size_t pull(E[] buf) { return buf.length; }
+	enum methodStr = "pull";
 }
 
 struct PeekSource(E) {
 	const(E)[] peek(size_t n) { return new E[n]; }
 	void consume(size_t n) {}
+	enum methodStr = "peek";
 }
 
-struct PushSource(E) {}
+struct PushSource(E) {
+	enum methodStr = "push";
+}
 
-struct AllocSource(E) {}
+struct AllocSource(E) {
+	enum methodStr = "alloc";
+}
 
-struct PullSink(E) {}
+struct PullSink(E) {
+	enum methodStr = "pull";
+}
 
-struct PeekSink(E) {}
+struct PeekSink(E) {
+	enum methodStr = "peek";
+}
 
 struct PushSink(E) {
 	size_t push(const(E)[] buf) { return buf.length; }
+	enum methodStr = "push";
 }
 
 struct AllocSink(E) {
 	bool alloc(ref E[] buf, size_t n) { buf = new E[n]; return true; }
 	void consume(size_t n) {}
+	enum methodStr = "alloc";
 }
 
 enum pullSource(E) = PullSource!E();
@@ -56,14 +70,20 @@ private template areSame(W...) {
 	enum areSame = is(Id!(W[0 .. $ / 2]) == Id!(W[$ / 2 .. $]));
 }
 
-import flod.meta : str;
-
 package template Traits(alias Src, alias Snk, SrcE, SnkE, UDAs...) {
 	static if (UDAs.length == 0) {
 		alias Source = Src;
 		alias Sink = Snk;
 		alias SourceElementType = SrcE;
 		alias SinkElementType = SnkE;
+		static if (!is(Src == None))
+			enum sourceMethodStr = Src!SrcE.methodStr;
+		else
+			enum sourceMethodStr = "";
+		static if (!is(Snk == None))
+			enum sinkMethodStr = Snk!SnkE.methodStr;
+		else
+			enum sinkMethodStr = "";
 		enum str = .str!Sink ~ "!" ~ .str!SinkElementType ~ "-" ~ .str!Source ~ "!" ~ .str!SourceElementType;
 	} else {
 		import std.meta : anySatisfy;
