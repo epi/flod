@@ -6,9 +6,9 @@
  */
 module flod.pipeline;
 
+public import std.typecons : Flag, Yes, No;
 import flod.traits;
 import flod.meta : NonCopyable, str;
-
 
 version(unittest) {
 	// sources:
@@ -389,8 +389,8 @@ template repeat(int id, string s) {
 		enum repeat = s ~ repeat!(id - 1, s);
 }
 
-template Inverter(T) {
-	@pullSource!T
+private template Inverter(alias method, T) {
+	@method
 	struct Inverter(Source) {
 		import core.thread : Fiber;
 
@@ -406,13 +406,15 @@ template Inverter(T) {
 			source.run();
 		}
 
-		size_t pull()(T[] buf) {
+		size_t pull()(T[] buf)
+		{
 			if (!source.scheduler.fiber)
 				source.scheduler.fiber = new Fiber(&run);
 			return source.sink.pull(buf);
 		}
 
-		const(T)[] peek()(size_t n) {
+		const(T)[] peek()(size_t n)
+		{
 			if (!source.scheduler.fiber)
 				source.scheduler.fiber = new Fiber(&run);
 			return source.sink.peek(n);
@@ -426,9 +428,7 @@ mixin template FiberScheduler() {
 	import flod.pipeline;
 	SinkDrivenFiberScheduler _flod_scheduler;
 
-	int yield() {
-		return _flod_scheduler.yield();
-	}
+	int yield() { return _flod_scheduler.yield(); }
 }
 
 struct SinkDrivenFiberScheduler {
@@ -465,7 +465,7 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-private struct StageWrapper(S) {
+private struct StageWrapper(S, Flag!"readFromSink" readFromSink = No.readFromSink) {
 	enum name = .str!S;
 	S _impl;
 	this(Args...)(auto ref Args args)
@@ -482,14 +482,17 @@ private struct StageWrapper(S) {
 	}
 	@property ref auto sink()() { return _impl.sink; }
 	@property ref auto source()() { return _impl.source; }
-	auto peek()(size_t n) { return _impl.peek(n); }
-	void consume()(size_t n) { _impl.consume(n); }
-	auto pull(T)(T[] buf)
-	{
-		static if (__traits(compiles, _impl.pull(buf)))
-			return _impl.pull(buf);
-		else
-			return _impl.sink.pull(buf);
+	static if (readFromSink) {
+		// active source needs to pass pull calls to any push-pull filter at the end of
+		// the active source chain, so that an inverter wrapping the whole chain can recover
+		// data sunk into the filter.
+		auto peek()(size_t n) { return _impl.sink.peek(n); }
+		void consume()(size_t n) { _impl.sink.consume(n); }
+		auto pull(T)(T[] buf) { return _impl.sink.pull(buf); }
+	} else {
+		auto peek()(size_t n) { return _impl.peek(n); }
+		void consume()(size_t n) { _impl.consume(n); }
+		auto pull(T)(T[] buf) { return _impl.pull(buf); }
 	}
 	auto run()() { return _impl.run(); }
 	auto step(A...)(auto ref A a) { return _impl.step(a); }
@@ -558,14 +561,14 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
 		alias Type = StageWrapper!(Stage!(SourceType, SinkType));
 	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
-		alias Type = StageWrapper!(Stage!SinkType);
+		alias Type = StageWrapper!(Stage!SinkType, Yes.readFromSink);
 	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
 		alias Type = StageWrapper!(Stage!SourceType);
 	else static if (isPassiveSink!Stage && isPassiveSource!Stage && is(Stage!FiberScheduler SF))
 		alias Type = StageWrapper!SF;
 	else static if (is(Stage))
 		alias Type = StageWrapper!Stage;
-	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // wrappers
+	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // inverter
 		alias Type = StageWrapper!(Stage!SourceType);
 
 	SourcePipeline sourcePipeline;
@@ -596,11 +599,11 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 					}
 				} else {
 					static if (hasSink) {
-						auto result = pipeline!(Inverter!SourceE)(
+						auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
 							pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args),
 							null);
 					} else {
-						auto result = pipeline!(Inverter!SourceE)(
+						auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
 							pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args),
 							null);
 					}
@@ -896,7 +899,8 @@ unittest {
 		.pipe!TestPullSink(Arg!TestPullSink());
 
 	pipe!TestAllocSource(Arg!TestAllocSource())
-//		.pipe!TestAllocFilter(Arg!TestAllocFilter()) // FIXME: only this causes compilation error
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
 		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
 		.pipe!TestPeekFilter(Arg!TestPeekFilter())
 		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
@@ -904,7 +908,6 @@ unittest {
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullSink(Arg!TestPullSink());
 
-/+ // FIXME: doesn't compile
 	pipe!TestAllocSource(Arg!TestAllocSource())
 		.pipe!TestAllocFilter(Arg!TestAllocFilter())
 		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
@@ -912,6 +915,7 @@ unittest {
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullSink(Arg!TestPullSink());
 
+	/+
 	// FIXME: compiles, but segfaults.
 	pipe!TestAllocSource(Arg!TestAllocSource())
 		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
