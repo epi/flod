@@ -409,14 +409,14 @@ private template Inverter(alias method, T) {
 		size_t pull()(T[] buf)
 		{
 			if (!source.scheduler.fiber)
-				source.scheduler.fiber = new Fiber(&run);
+				source.scheduler.fiber = new Fiber(&run, 65536);
 			return source.sink.pull(buf);
 		}
 
 		const(T)[] peek()(size_t n)
 		{
 			if (!source.scheduler.fiber)
-				source.scheduler.fiber = new Fiber(&run);
+				source.scheduler.fiber = new Fiber(&run, 65536);
 			return source.sink.peek(n);
 		}
 
@@ -915,8 +915,6 @@ unittest {
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullSink(Arg!TestPullSink());
 
-	/+
-	// FIXME: compiles, but segfaults.
 	pipe!TestAllocSource(Arg!TestAllocSource())
 		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
 		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
@@ -925,5 +923,5 @@ unittest {
 		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
 		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
 		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());+/
+		.pipe!TestPullSink(Arg!TestPullSink());
 }
