@@ -6,6 +6,8 @@
  */
 module flod.range;
 
+version(none):
+
 import std.stdio : File, KeepTerminator, writeln, writefln, stderr;
 import std.traits : isScalarType;
 
