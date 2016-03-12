@@ -8,9 +8,9 @@ module flod.adapter;
 
 import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
 import flod.traits;
+import flod.meta;
 
-private template DefaultPullPeekAdapter(Buffer, E)
-{
+private template DefaultPullPeekAdapter(Buffer, E) {
 	@pullSink!E @peekSource!E
 	struct DefaultPullPeekAdapter(Source) {
 		Source source;
@@ -60,120 +60,99 @@ auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 	return pipeline.pullPeek(movingBuffer());
 }
 
-unittest {
+private template DefaultPeekPullAdapter(E) {
+	@peekSink!E @pullSource!E
+	struct DefaultPeekPullAdapter(Source) {
+		Source source;
 
-}
-
-/+
-struct DefaultPeekPullAdapter(Source) {
-private:
-	Source source;
-
-public:
-	size_t pull(T)(T[] buf)
-	{
-		import std.algorithm : min;
-		static if (is(FixedPeekType!Source == T)) {
+		size_t pull(E[] buf)
+		{
+			import std.algorithm : min;
 			auto inbuf = source.peek(buf.length);
-		} else static if (!is(FixedPeekType!Source)) {
-			auto inbuf = source.peek!T(buf.length);
-		} else {
-			import flod.meta : str;
-			pragma(msg, str!Source ~ " does not support type " ~ str!T);
-		}
-		auto l = min(buf.length, inbuf.length);
-		buf[0 .. l] = inbuf[0 .. l];
-		source.consume(l);
-		return buf.length;
-	}
-}
-static assert(isPullSource!DefaultPeekPullAdapter);
-static assert(isPeekSink!DefaultPeekPullAdapter);
-
-
-struct DefaultPullPushAdapter(Source, Sink) {
-	pragma(msg, "instantiating with ", str!Source, ",", str!Sink);
-//private:
-	alias T = CommonType!(Source, Sink, ubyte);
-	Source source;
-	Sink sink;
-	size_t chunkSize;
-
-public:
-	void run()()
-	{
-		import core.stdc.stdlib : alloca;
-		auto buf = (cast(T*) alloca(T.sizeof * chunkSize))[0 .. chunkSize];
-		for (;;) {
-			size_t inp = source.pull(buf[]);
-			if (inp == 0)
-				break;
-			if (sink.push(buf[0 .. inp]) < chunkSize)
-				break;
+			auto l = min(buf.length, inbuf.length);
+			buf[0 .. l] = inbuf[0 .. l];
+			source.consume(l);
+			return buf.length;
 		}
 	}
 }
-static assert(isPullSink!DefaultPullPushAdapter);
-static assert(isPushSource!DefaultPullPushAdapter);
+
+///
+auto peekPull(Pipeline)(auto ref Pipeline pipeline)
+	if (isPeekPipeline!Pipeline)
+{
+	return pipeline.pipe!(DefaultPeekPullAdapter!(Pipeline.ElementType));
+}
+
+private template DefaultPullPushAdapter(E) {
+	@pullSink!E @pushSource!E
+	struct DefaultPullPushAdapter(Source, Sink) {
+		Source source;
+		Sink sink;
+		size_t chunkSize;
+
+		this(size_t chunkSize)
+		{
+			this.chunkSize = chunkSize;
+		}
+
+		void run()()
+		{
+			import core.stdc.stdlib : alloca;
+			auto buf = (cast(E*) alloca(E.sizeof * chunkSize))[0 .. chunkSize];
+			for (;;) {
+				size_t inp = source.pull(buf[]);
+				if (inp == 0)
+					break;
+				if (sink.push(buf[0 .. inp]) < chunkSize)
+					break;
+			}
+		}
+	}
+}
 
 ///
 auto pullPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
 	if (isPullPipeline!Pipeline)
 {
-	import flod.pipeline : pipe, isDeferredPipeline;
-	auto result = pipeline.pipe!DefaultPullPushAdapter(chunkSize);
-	static assert(isDeferredPipeline!(typeof(result)));
-	return result;
+	return pipeline.pipe!(DefaultPullPushAdapter!(Pipeline.ElementType))(chunkSize);
 }
 
-struct DefaultPeekPushAdapter(Source, Sink) {
-private:
-	alias T = CommonType!(Source, Sink, ubyte);
-	Source source;
-	Sink sink;
-	size_t chunkSize;
+private template DefaultPeekPushAdapter(E) {
+	@peekSink!E @pushSource!E
+	struct DefaultPeekPushAdapter(Source, Sink) {
+		Source source;
+		Sink sink;
+		size_t minSliceSize;
 
-public:
-	void run()()
-	{
-		for (;;) {
-			auto buf = source.peek!T(chunkSize);
-			if (buf.length == 0)
-				break;
-			size_t w = sink.push(buf[]);
-			if (w < chunkSize)
-				break;
-			source.consume(w);
+		this(size_t minSliceSize)
+		{
+			this.minSliceSize = minSliceSize;
+		}
+
+		void run()()
+		{
+			for (;;) {
+				auto buf = source.peek(minSliceSize);
+				if (buf.length == 0)
+					break;
+				size_t w = sink.push(buf[]);
+				if (w < minSliceSize)
+					break;
+				source.consume(w);
+			}
 		}
 	}
 }
-static assert(isPeekSink!DefaultPeekPushAdapter);
-static assert(isPushSource!DefaultPeekPushAdapter);
 
 ///
-auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = size_t.sizeof)
+auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t.sizeof)
 	if (isPeekPipeline!Pipeline)
 {
-	import flod.pipeline : pipe, isDeferredPipeline;
-	auto result = pipeline.pipe!DefaultPeekPushAdapter(chunkSize);
-	pragma(msg, typeof(result).stringof, " ", str!(typeof(result)));
-	static assert(isDeferredPipeline!(typeof(result)));
-	return result;
+	return pipeline.pipe!(DefaultPeekPushAdapter!(Pipeline.ElementType))(minSliceSize);
 }
 
-unittest {
-	import std.array : appender;
-	import std.range : iota, array;
-	import flod.pipeline : toOutputRange;
-	auto app = appender!(uint[]);
-	iota(0, 1048576).array().peekPush().toOutputRange(app).run();
-	assert(app.data == iota(0, 1048576).array());
-}
-
-+/
-
-
-template DefaultPushPullAdapter(Buffer, E) {
+private template DefaultPushPullAdapter(Buffer, E) {
 	@pushSink!E @pullSource!E
 	struct DefaultPushPullAdapter(alias Scheduler) {
 		mixin Scheduler;
@@ -263,9 +242,6 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 	import flod.buffer : movingBuffer;
 	return pipeline.pushPull(movingBuffer());
 }
-
-import flod.meta;
-import flod.traits : pushSource;
 
 @pushSource!int @check!ArraySource
 static struct ArraySource(Sink) {
