@@ -578,40 +578,47 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 
 		debug alias X = whatIsAppended!(Pipeline, NextStage);
 
-		static if (isPassiveSource!Stage) {
-			auto result = pipeline!NextStage(this, null, nextArgs);
-		} else {
-			static assert(isActiveSource!Stage);
-			static if (isPassiveSink!NextStage && isPassiveSource!NextStage) {
-				static if (isPassiveSink!Stage) {
-					static assert(!hasSource);
-					static if (hasSink) {
-						auto result = pipeline!Stage(null, sinkPipeline.pipe!NextStage(nextArgs), args);
+		static if (areCompatible!(LastStage, NextStage)) {
+			static if (isPassiveSource!Stage) {
+				auto result = pipeline!NextStage(this, null, nextArgs);
+			} else {
+				static assert(isActiveSource!Stage);
+				static if (isPassiveSink!NextStage && isPassiveSource!NextStage) {
+					static if (isPassiveSink!Stage) {
+						static assert(!hasSource);
+						static if (hasSink) {
+							auto result = pipeline!Stage(null, sinkPipeline.pipe!NextStage(nextArgs), args);
+						} else {
+							auto result = pipeline!Stage(null, pipeline!NextStage(null, null, nextArgs), args);
+						}
 					} else {
-						auto result = pipeline!Stage(null, pipeline!NextStage(null, null, nextArgs), args);
+						static if (hasSink) {
+							auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
+								pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args),
+								null);
+						} else {
+							auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
+								pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args),
+								null);
+						}
 					}
 				} else {
-					static if (hasSink) {
-						auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
-							pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args),
-							null);
-					} else {
-						auto result = pipeline!(Inverter!(sourceMethod!NextStage, SourceE))(
-							pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args),
-							null);
-					}
+					static if (hasSink)
+						auto result = pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args);
+					else
+						auto result = pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args);
 				}
-			} else {
-				static if (hasSink)
-					auto result = pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args);
-				else
-					auto result = pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args);
 			}
+			static if (isSource!NextStage || isSink!FirstStage)
+				return result;
+			else
+				result.run();
+		} else {
+			import std.string : capitalize;
+			import flod.adapter;
+			enum adapterName = Traits!LastStage.sourceMethodStr ~ Traits!NextStage.sinkMethodStr.capitalize();
+			mixin(`return this.` ~ adapterName ~ `.pipe!NextStage(nextArgs);`);
 		}
-		static if (isSource!NextStage || isSink!FirstStage)
-			return result;
-		else
-			result.run();
 	}
 
 	static if (is(Type)) {
@@ -922,5 +929,93 @@ unittest {
 		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
 		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
 		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+}
+
+unittest {
+	// implicit adapters, pull->push
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+}
+
+unittest {
+	// implicit adapters, push->pull
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPushSource(Arg!TestPushSource())
+		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+}
+
+unittest {
+	// implicit adapters, peek->pull
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPullFilter(Arg!TestPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+}
+
+unittest {
+	// implicit adapters, peek->push
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPeekSource(Arg!TestPeekSource())
+		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullSink(Arg!TestPullSink());
 }
