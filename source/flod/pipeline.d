@@ -57,7 +57,7 @@ version(unittest) {
 		mixin TestStage;
 		Sink sink;
 		ulong dummy;
-		const(int)[1] blob;
+		const(int)[1337] blob;
 
 		void run()()
 		{
@@ -368,69 +368,6 @@ version(unittest) {
 	}
 }
 
-void constructInPlace(T, Args...)(ref T t, auto ref Args args)
-{
-	debug(FlodTraceLifetime) {
-		import std.experimental.logger : tracef;
-		tracef("Construct %s with %s", T.name, Args.stringof);
-	}
-	static if (__traits(hasMember, t, "__ctor")) {
-		t.__ctor(args);
-	} else static if (Args.length > 0) {
-		static assert(0, "Stage " ~ str!T ~ " does not have a non-trivial constructor" ~
-			" but construction was requested with arguments " ~ Args.stringof);
-	}
-}
-
-template repeat(int id, string s) {
-	static if (id == 0)
-		enum repeat = "";
-	else
-		enum repeat = s ~ repeat!(id - 1, s);
-}
-
-private template Inverter(alias method, T) {
-	@method
-	struct Inverter(Source) {
-		import core.thread : Fiber;
-
-		Source source;
-
-		~this()
-		{
-			source.scheduler.stop();
-		}
-
-		void run()
-		{
-			source.run();
-		}
-
-		size_t pull()(T[] buf)
-		{
-			if (!source.scheduler.fiber)
-				source.scheduler.fiber = new Fiber(&run, 65536);
-			return source.sink.pull(buf);
-		}
-
-		const(T)[] peek()(size_t n)
-		{
-			if (!source.scheduler.fiber)
-				source.scheduler.fiber = new Fiber(&run, 65536);
-			return source.sink.peek(n);
-		}
-
-		void consume()(size_t n) { source.sink.consume(n); }
-	}
-}
-
-mixin template FiberScheduler() {
-	import flod.pipeline;
-	SinkDrivenFiberScheduler _flod_scheduler;
-
-	int yield() { return _flod_scheduler.yield(); }
-}
-
 struct SinkDrivenFiberScheduler {
 	import std.stdio;
 	import core.thread : Fiber;
@@ -465,7 +402,22 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-private struct StageWrapper(S, Flag!"readFromSink" readFromSink = No.readFromSink) {
+mixin template FiberScheduler() {
+	import flod.pipeline;
+	SinkDrivenFiberScheduler _flod_scheduler;
+
+	int yield() { return _flod_scheduler.yield(); }
+	void spawn(void delegate() dg)
+	{
+		import core.thread : Fiber;
+		if (!_flod_scheduler.fiber)
+			_flod_scheduler.fiber = new Fiber(dg, 65536);
+	}
+	void stop() { _flod_scheduler.stop(); }
+}
+
+// forwards all calls to its impl
+private struct Forward(S, Flag!"readFromSink" readFromSink = No.readFromSink) {
 	enum name = .str!S;
 	S _impl;
 	this(Args...)(auto ref Args args)
@@ -489,23 +441,66 @@ private struct StageWrapper(S, Flag!"readFromSink" readFromSink = No.readFromSin
 		auto peek()(size_t n) { return _impl.sink.peek(n); }
 		void consume()(size_t n) { _impl.sink.consume(n); }
 		auto pull(T)(T[] buf) { return _impl.sink.pull(buf); }
+		void spawn()(void delegate() dg) { return _impl.sink.spawn(dg); }
+		void stop()() { return _impl.sink.stop(); }
 	} else {
 		auto peek()(size_t n) { return _impl.peek(n); }
 		void consume()(size_t n) { _impl.consume(n); }
 		auto pull(T)(T[] buf) { return _impl.pull(buf); }
+		void spawn()(void delegate() dg) { return _impl.spawn(dg); }
+		void stop()() { return _impl.stop(); }
 	}
 	auto run()() { return _impl.run(); }
 	auto step(A...)(auto ref A a) { return _impl.step(a); }
 	auto alloc(T)(ref T[] buf, size_t n) { return _impl.alloc(buf, n); }
 	auto commit()(size_t n) { return _impl.commit(n); }
 	auto push(T)(const(T)[] buf) { return _impl.push(buf); }
-	@property ref auto scheduler()() {
-		static if (__traits(compiles, _impl.sink.scheduler))
-			return _impl.sink.scheduler;
-		else static if (__traits(compiles, _impl._flod_scheduler))
-			return _impl._flod_scheduler;
-		else
-			static assert(0, .str!S ~ " has no scheduler");
+}
+
+private template Inverter(alias method, T) {
+	@method
+	struct Inverter(Source) {
+		import core.thread : Fiber;
+
+		Source source;
+
+		~this()
+		{
+			source.sink.stop();
+		}
+
+		void run()
+		{
+			source.run();
+		}
+
+		size_t pull()(T[] buf)
+		{
+			source.sink.spawn(&run);
+			return source.sink.pull(buf);
+		}
+
+		const(T)[] peek()(size_t n)
+		{
+			source.sink.spawn(&run);
+			return source.sink.peek(n);
+		}
+
+		void consume()(size_t n) { source.sink.consume(n); }
+	}
+}
+
+private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
+{
+	debug(FlodTraceLifetime) {
+		import std.experimental.logger : tracef;
+		tracef("Construct at %x..%x %s with %s", &t, &t + 1, T.name, Args.stringof);
+	}
+	static if (__traits(hasMember, t, "__ctor")) {
+		t.__ctor(args);
+	} else static if (Args.length > 0) {
+		static assert(0, "Stage " ~ str!T ~ " does not have a non-trivial constructor" ~
+			" but construction was requested with arguments " ~ Args.stringof);
 	}
 }
 
@@ -546,11 +541,9 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 		alias ElementType = W;
 
 	enum pipeStr = sourcePipeStr ~ .str!S ~ sinkPipeStr;
-
 	enum treeStr(int indent) = sourceTreeStr!indent
 		~ "|" ~ repeat!(indent, "-") ~ "-" ~ .str!S
 		~ sinkTreeStr!indent;
-
 	enum str = "(" ~ sourceStr ~ .str!Stage ~ sinkStr ~ ")";
 
 	static if (hasSink && is(SinkPipeline.Type T))
@@ -559,17 +552,17 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 		alias SourceType = U;
 
 	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
-		alias Type = StageWrapper!(Stage!(SourceType, SinkType));
+		alias Type = Forward!(Stage!(SourceType, SinkType));
 	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
-		alias Type = StageWrapper!(Stage!SinkType, Yes.readFromSink);
+		alias Type = Forward!(Stage!SinkType, Yes.readFromSink);
 	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
-		alias Type = StageWrapper!(Stage!SourceType);
+		alias Type = Forward!(Stage!SourceType);
 	else static if (isPassiveSink!Stage && isPassiveSource!Stage && is(Stage!FiberScheduler SF))
-		alias Type = StageWrapper!SF;
+		alias Type = Forward!SF;
 	else static if (is(Stage))
-		alias Type = StageWrapper!Stage;
+		alias Type = Forward!Stage;
 	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // inverter
-		alias Type = StageWrapper!(Stage!SourceType);
+		alias Type = Forward!(Stage!SourceType);
 
 	SourcePipeline sourcePipeline;
 	SinkPipeline sinkPipeline;
@@ -916,10 +909,16 @@ unittest {
 		.pipe!TestPullSink(Arg!TestPullSink());
 
 	pipe!TestAllocSource(Arg!TestAllocSource())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
 		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
 		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
 		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
 		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
+		.pipe!TestPushFilter(Arg!TestPushFilter())
+		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
+		.pipe!TestAllocFilter(Arg!TestAllocFilter())
+		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
 		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
 		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
 		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())

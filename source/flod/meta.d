@@ -56,6 +56,14 @@ template str(W...) {
 }
 
 ///
+template repeat(int id, string s) {
+	static if (id == 0)
+		enum repeat = "";
+	else
+		enum repeat = s ~ repeat!(id - 1, s);
+}
+
+///
 template ReplaceWithMask(ulong mask, ReplacementForZeros, Types...) {
 	alias What = ReplacementForZeros;
 	import std.meta : AliasSeq;
