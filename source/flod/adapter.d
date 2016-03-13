@@ -228,6 +228,33 @@ auto peekAlloc(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_
 	return pipeline.pipe!(DefaultPeekAllocAdapter!(Pipeline.ElementType))(minSliceSize, maxSliceSize);
 }
 
+private template DefaultPushAllocAdapter(E) {
+	@pushSink!E @allocSource!E
+	struct DefaultPushAllocAdapter(Sink) {
+		Sink sink;
+
+		size_t push(const(E)[] buf)
+		{
+			E[] ob;
+			if (!sink.alloc(ob, buf.length)) {
+				import core.exception : OutOfMemoryError;
+				throw new OutOfMemoryError();
+			}
+			ob[0 .. buf.length] = buf[];
+			return sink.commit(buf.length);
+		}
+	}
+}
+
+///
+auto pushAlloc(Pipeline)(auto ref Pipeline pipeline)
+	if (isPushPipeline!Pipeline)
+{
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultPushAllocAdapter!(E);
+	return pipeline.pipe!PP();
+}
+
 private template DefaultPushPullAdapter(Buffer, E) {
 	@pushSink!E @pullSource!E
 	struct DefaultPushPullAdapter(alias Scheduler) {
