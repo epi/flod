@@ -113,6 +113,43 @@ auto pullPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
 	return pipeline.pipe!(DefaultPullPushAdapter!(Pipeline.ElementType))(chunkSize);
 }
 
+private template DefaultPullAllocAdapter(E) {
+	@pullSink!E @allocSource!E
+	struct DefaultPullAllocAdapter(Source, Sink) {
+		Source source;
+		Sink sink;
+		size_t chunkSize;
+
+		this(size_t chunkSize)
+		{
+			this.chunkSize = chunkSize;
+		}
+
+		void run()()
+		{
+			E[] buf;
+			for (;;) {
+				if (!sink.alloc(buf, chunkSize)) {
+					import core.exception : OutOfMemoryError;
+					throw new OutOfMemoryError;
+				}
+				size_t inp = source.pull(buf[]);
+				if (inp == 0)
+					break;
+				if (sink.commit(inp) < chunkSize)
+					break;
+			}
+		}
+	}
+}
+
+///
+auto pullAlloc(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
+	if (isPullPipeline!Pipeline)
+{
+	return pipeline.pipe!(DefaultPullAllocAdapter!(Pipeline.ElementType))(chunkSize);
+}
+
 private template DefaultPeekPushAdapter(E) {
 	@peekSink!E @pushSource!E
 	struct DefaultPeekPushAdapter(Source, Sink) {
