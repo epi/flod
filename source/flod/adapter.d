@@ -234,3 +234,63 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 	import flod.buffer : movingBuffer;
 	return pipeline.pushPull(movingBuffer());
 }
+
+private template DefaultPushPeekAdapter(Buffer, E) {
+	@pushSink!E @peekSource!E
+	struct DefaultPushPeekAdapter(alias Scheduler) {
+		import std.algorithm : min;
+		mixin Scheduler;
+		Buffer buffer;
+
+		this()(auto ref Buffer buffer) {
+			this.buffer = buffer;
+		}
+
+		size_t push(const(E)[] buf)
+		{
+			size_t n = buf.length;
+			auto ob = buffer.alloc!E(n);
+			if (ob.length < n) {
+				import core.exception : OutOfMemoryError;
+				throw new OutOfMemoryError();
+			}
+			ob[0 .. n] = buf[0 .. n];
+			buffer.commit!E(n);
+			yield();
+			return n;
+		}
+
+		const(E)[] peek(size_t n)
+		{
+			const(E)[] result;
+			for (;;) {
+				result = buffer.peek!E;
+				if (result.length >= n)
+					break;
+				if (yield())
+					break;
+			}
+			return result;
+		}
+
+		void consume(size_t n)
+		{
+			buffer.consume!E(n);
+		}
+	}
+}
+
+///
+auto pushPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+{
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultPushPeekAdapter!(Buffer, E);
+	return pipeline.pipe!PP(buffer);
+}
+
+///
+auto pushPeek(Pipeline)(auto ref Pipeline pipeline)
+{
+	import flod.buffer : movingBuffer;
+	return pipeline.pushPeek(movingBuffer());
+}

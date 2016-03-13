@@ -1105,6 +1105,15 @@ unittest {
 }
 
 unittest {
+	// implicit adapters, push->peek
+	testChain!`push,peek`;
+	testChain!`push,peekPush,push`;
+	testChain!`push,peekAlloc,alloc`;
+	testChain!`push,peek,peek`;
+	testChain!`push,peekPull,pull`;
+}
+
+unittest {
 	// implicit adapters, peek->pull
 	testChain!`peek,pull`;
 	testChain!`peek,pullPush,push`;
