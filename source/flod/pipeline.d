@@ -122,7 +122,7 @@ version(unittest) {
 				auto len = min(1337, inputArray.length);
 				if (!sink.alloc(buf, len))
 					assert(0);
-				buf[] = inputArray[0 .. len];
+				buf[0 .. len] = inputArray[0 .. len];
 				if (sink.commit(len) != len)
 					break;
 				inputArray = inputArray[len .. $];
@@ -1129,4 +1129,13 @@ unittest {
 	testChain!`peek,pushAlloc,alloc`;
 	testChain!`peek,pushPeek,peek`;
 	testChain!`peek,pushPull,pull`;
+}
+
+unittest {
+	// implicit adapters, alloc->peek
+	testChain!`alloc,peek`;
+	testChain!`alloc,peekPush,push`;
+	testChain!`alloc,peekAlloc,alloc`;
+	testChain!`alloc,peek,peek`;
+	testChain!`alloc,peekPull,pull`;
 }

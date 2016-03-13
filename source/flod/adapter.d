@@ -6,7 +6,7 @@
  */
 module flod.adapter;
 
-import flod.pipeline: pipe, isPullPipeline, isPeekPipeline;
+import flod.pipeline;
 import flod.traits;
 import flod.meta;
 
@@ -235,6 +235,26 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 	return pipeline.pushPull(movingBuffer());
 }
 
+private template ImplementPeekConsume(E) {
+	const(E)[] peek(size_t n)
+	{
+		const(E)[] result;
+		for (;;) {
+			result = buffer.peek!E;
+			if (result.length >= n)
+				break;
+			if (yield())
+				break;
+		}
+		return result;
+	}
+
+	void consume(size_t n)
+	{
+		buffer.consume!E(n);
+	}
+}
+
 private template DefaultPushPeekAdapter(Buffer, E) {
 	@pushSink!E @peekSource!E
 	struct DefaultPushPeekAdapter(alias Scheduler) {
@@ -242,7 +262,8 @@ private template DefaultPushPeekAdapter(Buffer, E) {
 		mixin Scheduler;
 		Buffer buffer;
 
-		this()(auto ref Buffer buffer) {
+		this()(auto ref Buffer buffer)
+		{
 			this.buffer = buffer;
 		}
 
@@ -256,29 +277,15 @@ private template DefaultPushPeekAdapter(Buffer, E) {
 			}
 			ob[0 .. n] = buf[0 .. n];
 			buffer.commit!E(n);
-			yield();
+			if (yield())
+				return 0;
 			return n;
 		}
 
-		const(E)[] peek(size_t n)
-		{
-			const(E)[] result;
-			for (;;) {
-				result = buffer.peek!E;
-				if (result.length >= n)
-					break;
-				if (yield())
-					break;
-			}
-			return result;
-		}
-
-		void consume(size_t n)
-		{
-			buffer.consume!E(n);
-		}
+		mixin ImplementPeekConsume!E;
 	}
 }
+
 
 ///
 auto pushPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
@@ -293,4 +300,53 @@ auto pushPeek(Pipeline)(auto ref Pipeline pipeline)
 {
 	import flod.buffer : movingBuffer;
 	return pipeline.pushPeek(movingBuffer());
+}
+
+private template DefaultAllocPeekAdapter(Buffer, E) {
+	@allocSink!E @peekSource!E
+	struct DefaultAllocPeekAdapter(alias Scheduler) {
+		import std.algorithm : min;
+		mixin Scheduler;
+		Buffer buffer;
+
+		this()(auto ref Buffer buffer)
+		{
+			this.buffer = buffer;
+		}
+
+		bool alloc(ref E[] buf, size_t n)
+		{
+			buf = buffer.alloc!E(n);
+			if (!buf || buf.length < n)
+				return false;
+			return true;
+		}
+
+		size_t commit(size_t n)
+		{
+			buffer.commit!E(n);
+			if (yield())
+				return 0;
+			return n;
+		}
+
+		mixin ImplementPeekConsume!E;
+	}
+}
+
+///
+auto allocPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+	if (isAllocPipeline!Pipeline)
+{
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultAllocPeekAdapter!(Buffer, E);
+	return pipeline.pipe!PP(buffer);
+}
+
+///
+auto allocPeek(Pipeline)(auto ref Pipeline pipeline)
+	if (isAllocPipeline!Pipeline)
+{
+	import flod.buffer : movingBuffer;
+	return pipeline.allocPeek(movingBuffer());
 }
