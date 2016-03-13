@@ -185,6 +185,49 @@ auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t
 	return pipeline.pipe!(DefaultPeekPushAdapter!(Pipeline.ElementType))(minSliceSize);
 }
 
+private template DefaultPeekAllocAdapter(E) {
+	@peekSink!E @allocSource!E
+	struct DefaultPeekAllocAdapter(Source, Sink) {
+		Source source;
+		Sink sink;
+		size_t minSliceSize;
+		size_t maxSliceSize;
+
+		this(size_t minSliceSize, size_t maxSliceSize)
+		{
+			this.minSliceSize = minSliceSize;
+			this.maxSliceSize = maxSliceSize;
+		}
+
+		void run()()
+		{
+			E[] ob;
+			for (;;) {
+				auto ib = source.peek(minSliceSize);
+				if (ib.length == 0)
+					break;
+				auto len = min(ib.length, maxSliceSize);
+				if (!sink.alloc(ob, len)) {
+					import core.exception : OutOfMemoryError;
+					throw new OutOfMemoryError();
+				}
+				ob[0 .. len] = ib[0 .. len];
+				size_t w = sink.commit(len);
+				source.consume(w);
+				if (w < minSliceSize)
+					break;
+			}
+		}
+	}
+}
+
+///
+auto peekAlloc(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
+	if (isPeekPipeline!Pipeline)
+{
+	return pipeline.pipe!(DefaultPeekAllocAdapter!(Pipeline.ElementType))(minSliceSize, maxSliceSize);
+}
+
 private template DefaultPushPullAdapter(Buffer, E) {
 	@pushSink!E @pullSource!E
 	struct DefaultPushPullAdapter(alias Scheduler) {
@@ -195,7 +238,8 @@ private template DefaultPushPullAdapter(Buffer, E) {
 		Buffer buffer;
 		const(E)[] pushed;
 
-		this()(auto ref Buffer buffer) {
+		this()(auto ref Buffer buffer)
+		{
 			this.buffer = moveIfNonCopyable(buffer);
 		}
 
