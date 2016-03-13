@@ -72,7 +72,7 @@ private template DefaultPeekPullAdapter(E) {
 			auto l = min(buf.length, inbuf.length);
 			buf[0 .. l] = inbuf[0 .. l];
 			source.consume(l);
-			return buf.length;
+			return l;
 		}
 	}
 }
@@ -139,6 +139,7 @@ private template DefaultPeekPushAdapter(E) {
 				size_t w = sink.push(buf[]);
 				if (w < minSliceSize)
 					break;
+				assert(w <= buf.length);
 				source.consume(w);
 			}
 		}
