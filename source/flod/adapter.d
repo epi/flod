@@ -40,11 +40,6 @@ private template DefaultPullPeekAdapter(Buffer, E) {
 	}
 }
 
-unittest {
-	import flod.buffer : NullBuffer;
-	static assert(isPeekSource!(DefaultPullPeekAdapter!(NullBuffer, int)));
-}
-
 ///
 auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
 	if (isPullPipeline!Pipeline)
@@ -238,53 +233,4 @@ auto pushPull(Pipeline)(auto ref Pipeline pipeline)
 {
 	import flod.buffer : movingBuffer;
 	return pipeline.pushPull(movingBuffer());
-}
-
-@pushSource!int @check!ArraySource
-static struct ArraySource(Sink) {
-	int[] array;
-	int counter = 1;
-
-	this(int[] arr) { array = arr; }
-	Sink sink;
-
-	void run()
-	{
-		while (array.length) {
-			import std.algorithm : min;
-			auto l = min(array.length, counter);
-			assert(l);
-			if (l != sink.push(array[0 .. l]))
-				break;
-			array = array[l .. $];
-			++counter;
-		}
-	}
-}
-
-unittest {
-
-	import std.range : iota, array;
-	import flod.buffer;
-	import flod.pipeline : pipe;
-
-	auto arr = iota(0, 1048576).array();
-	int[] result;
-	auto pl = pipe!ArraySource(arr.dup).pushPull().create();
-	auto n = 100;
-	result.length = n;
-	assert(pl.pull(result) == n);
-	assert(result[0 .. n] == arr[0 .. n]);
-	arr = arr[n .. $];
-
-	n = 1337;
-	result.length = n;
-	assert(pl.pull(result) == n);
-	assert(result[0 .. n] == arr[0 .. n]);
-	arr = arr[n .. $];
-
-	n = 4000000;
-	result.length = n;
-	assert(pl.pull(result) == arr.length);
-	assert(result[0 .. arr.length] == arr[0 .. arr.length]);
 }
