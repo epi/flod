@@ -11,6 +11,39 @@ import flod.traits;
 import flod.meta : NonCopyable, str;
 
 version(unittest) {
+	import std.algorithm : min, max, map, copy;
+	import std.conv : to;
+	import std.experimental.logger : logf, errorf;
+	import std.range : isInputRange, ElementType, array, take;
+	import std.string : split, toLower, startsWith, endsWith;
+
+	ulong[] inputArray;
+	ulong[] outputArray;
+	size_t outputIndex;
+
+	uint filterMark(string f) {
+		f = f.toLower;
+		uint fm;
+		if (f.startsWith("pull"))
+			fm = 1;
+		else if (f.startsWith("push"))
+			fm = 2;
+		else if (f.startsWith("alloc"))
+			fm = 3;
+		if (f.endsWith("pull"))
+			fm |= 1 << 2;
+		else if (f.endsWith("push"))
+			fm |= 2 << 2;
+		else if (f.endsWith("alloc"))
+			fm |= 3 << 2;
+		return fm;
+	}
+
+	ulong filter(string f)(ulong a) {
+		enum fm = filterMark(f);
+		return (a << 4) | fm;
+	}
+
 	// sources:
 	struct Arg(alias T) { bool constructed = false; }
 
@@ -35,122 +68,180 @@ version(unittest) {
 		Arg!Stage arg;
 	}
 
-	@pullSource!int
+	@pullSource!ulong
 	struct TestPullSource {
 		mixin TestStage;
-		size_t pull(int[] buf)
+
+		size_t pull(ulong[] buf)
 		{
-			buf[] = int.init;
-			return buf.length;
+			auto len = min(buf.length, inputArray.length);
+			buf[0 .. len] = inputArray[0 .. len];
+			inputArray = inputArray[len .. $];
+			return len;
 		}
 	}
 
-	@peekSource!int
+	@peekSource!ulong
 	struct TestPeekSource {
 		mixin TestStage;
-		const(int)[] peek(size_t n) { return new int[n]; }
-		void consume(size_t n) {}
+
+		const(ulong)[] peek(size_t n)
+		{
+			auto len = min(max(n, 2909), inputArray.length);
+			return inputArray[0 .. len];
+		}
+
+		void consume(size_t n) { inputArray = inputArray[n .. $]; }
 	}
 
-	@pushSource!int
+	@pushSource!ulong
 	struct TestPushSource(Sink) {
 		mixin TestStage;
 		Sink sink;
-		ulong dummy;
-		const(int)[1337] blob;
 
 		void run()()
 		{
-			while (sink.push(blob[]) == blob.length) {}
+			while (inputArray.length) {
+				auto len = min(1337, inputArray.length);
+				if (sink.push(inputArray[0 .. len]) != len)
+					break;
+				inputArray = inputArray[len .. $];
+			}
 		}
 	}
 
-	@allocSource!int
+	@allocSource!ulong
 	struct TestAllocSource(Sink) {
 		mixin TestStage;
 		Sink sink;
-		string dummy;
-		ulong unused;
 
 		void run()()
 		{
-			for (;;) {
-				int[] buf;
-				if (!sink.alloc(buf, 15))
+			ulong[] buf;
+			while (inputArray.length) {
+				auto len = min(1337, inputArray.length);
+				if (!sink.alloc(buf, len))
+					assert(0);
+				buf[] = inputArray[0 .. len];
+				if (sink.commit(len) != len)
 					break;
-				buf[] = typeof(buf[0]).init;
-				if (sink.commit(buf.length) != 15)
-					break;
+				inputArray = inputArray[len .. $];
 			}
 		}
 	}
 
 	// sinks:
 
-	@pullSink!int
+	@pullSink!ulong
 	struct TestPullSink(Source) {
 		mixin TestStage;
 		Source source;
-		int a = 1337;
 
 		void run()
 		{
-			auto buf = new int[a];
-			foreach (i; 1 .. 10) {
-				if (source.pull(buf) != buf.length)
+			while (outputIndex < outputArray.length) {
+				auto len = min(4157, outputArray.length - outputIndex);
+				auto pd = source.pull(outputArray[outputIndex .. outputIndex + len]);
+				outputIndex += pd;
+				if (pd < len)
 					break;
 			}
 		}
 	}
 
-	@peekSink!int
+	@peekSink!ulong
 	struct TestPeekSink(Source) {
 		mixin TestStage;
 		Source source;
+
 		void run()
 		{
-			auto buf = source.peek(10);
-			source.consume(buf.length);
+			while (outputIndex < outputArray.length) {
+				auto len = min(4157, outputArray.length - outputIndex);
+				auto ib = source.peek(len);
+				auto olen = min(len, ib.length, 6379);
+				outputArray[outputIndex .. outputIndex + olen] = ib[0 .. olen];
+				outputIndex += olen;
+				source.consume(olen);
+				if (olen < len)
+					break;
+			}
 		}
 	}
 
-	@pushSink!int
+	@pushSink!ulong
 	struct TestPushSink {
 		mixin TestStage;
-		size_t push(const(int)[] buf) { return buf.length - 1; }
+
+		size_t push(const(ulong)[] buf)
+		{
+			auto len = min(buf.length, outputArray.length - outputIndex);
+			if (len) {
+				outputArray[outputIndex .. outputIndex + len] = buf[0 .. len];
+				outputIndex += len;
+			}
+			return len;
+		}
 	}
 
-	@allocSink!int
+	@allocSink!ulong
 	struct TestAllocSink {
 		mixin TestStage;
-		bool alloc(ref int[] buf, size_t n) { buf = new int[n]; return true; }
-		size_t commit(size_t n) { return n - 1; }
+		ulong[] last;
+
+		bool alloc(ref ulong[] buf, size_t n)
+		{
+			if (n < outputArray.length - outputIndex)
+				buf = outputArray[outputIndex .. outputIndex + n];
+			else
+				buf = last = new ulong[n];
+			return true;
+		}
+
+		size_t commit(size_t n)
+		out(result) { assert(result <= n); }
+		body
+		{
+			if (!last) {
+				outputIndex += n;
+				return n;
+			} else {
+				auto len = min(n, outputArray.length - outputIndex);
+				outputArray[outputIndex .. outputIndex + len] = last[0 .. len];
+				outputIndex += len;
+				return len;
+			}
+		}
 	}
 
 	// filter
 
-	@peekSink!int @peekSource!int
+	@peekSink!ulong @peekSource!ulong
 	struct TestPeekFilter(Source) {
 		mixin TestStage;
 		Source source;
-		const(int)[] peek(size_t n) { return source.peek(n); }
+		const(ulong)[] peek(size_t n)
+		{
+			return source.peek(n).map!(filter!"peek").array();
+		}
 		void consume(size_t n) { source.consume(n); }
 	}
 
-	@peekSink!int @pullSource!int
+	@peekSink!ulong @pullSource!ulong
 	struct TestPeekPullFilter(Source) {
 		mixin TestStage;
 		Source source;
-		size_t pull(int[] buf)
+		size_t pull(ulong[] buf)
 		{
 			auto ib = source.peek(buf.length);
-			source.consume(ib.length);
-			buf[] = buf[0].init;
-			return buf.length;
+			auto len = min(ib.length, buf.length);
+			ib.take(len).map!(filter!"peekPull").copy(buf);
+			source.consume(len);
+			return len;
 		}
 	}
 
-	@peekSink!int @pushSource!int
+	@peekSink!ulong @pushSource!ulong
 	struct TestPeekPushFilter(Source, Sink) {
 		mixin TestStage;
 		Source source;
@@ -159,53 +250,64 @@ version(unittest) {
 		{
 			for (;;) {
 				auto ib = source.peek(4096);
+				auto ob = ib.map!(filter!"peekPush").array();
 				source.consume(ib.length);
-				if (sink.push(ib) < 4096)
+				if (sink.push(ob) < 4096)
 					break;
 			}
 		}
 	}
 
-	@peekSink!int @allocSource!int
+	@peekSink!ulong @allocSource!ulong
 	struct TestPeekAllocFilter(Source, Sink) {
 		mixin TestStage;
 		Source source;
 		Sink sink;
 		void run()()
 		{
+			ulong[] buf;
 			for (;;) {
 				auto ib = source.peek(4096);
-				source.consume(ib.length);
-				int[] buf;
 				if (!sink.alloc(buf, ib.length))
-					break;
-				if (sink.commit(ib.length) < 4096)
+					assert(0);
+				auto len = min(ib.length, buf.length);
+				ib.take(len).map!(filter!"peekAlloc").copy(buf);
+				source.consume(len);
+				if (sink.commit(len) < 4096)
 					break;
 			}
 		}
 	}
 
-	@pullSink!int @pullSource!int
+	@pullSink!ulong @pullSource!ulong
 	struct TestPullFilter(Source) {
 		mixin TestStage;
 		Source source;
-		size_t pull(int[] buf) { return source.pull(buf); }
+		size_t pull(ulong[] buf)
+		{
+			size_t n = source.pull(buf);
+			foreach (ref b; buf[0 .. n])
+				b = b.filter!"pull";
+			return n;
+		}
 	}
 
-	@pullSink!int @peekSource!int
+	@pullSink!ulong @peekSource!ulong
 	struct TestPullPeekFilter(Source) {
 		mixin TestStage;
 		Source source;
-		const(int)[] peek(size_t n)
+		const(ulong)[] peek(size_t n)
 		{
-			auto buf = new int[n];
+			auto buf = new ulong[n];
 			size_t m = source.pull(buf[]);
+			foreach (ref b; buf[0 .. m])
+				b = b.filter!"pullPeek";
 			return buf[0 .. m];
 		}
 		void consume(size_t n) {}
 	}
 
-	@pullSink!int @pushSource!int
+	@pullSink!ulong @pushSource!ulong
 	struct TestPullPushFilter(Source, Sink) {
 		mixin TestStage;
 		Source source;
@@ -213,15 +315,17 @@ version(unittest) {
 		void run()()
 		{
 			for (;;) {
-				int[4096] buf;
+				ulong[4096] buf;
 				auto n = source.pull(buf[]);
+				foreach (ref b; buf[0 .. n])
+					b = b.filter!"pullPush";
 				if (sink.push(buf[0 .. n]) < 4096)
 					break;
 			}
 		}
 	}
 
-	@pullSink!int @allocSource!int
+	@pullSink!ulong @allocSource!ulong
 	struct TestPullAllocFilter(Source, Sink) {
 		mixin TestStage;
 		Source source;
@@ -229,143 +333,293 @@ version(unittest) {
 		void run()()
 		{
 			for (;;) {
-				int[] buf;
+				ulong[] buf;
 				if (!sink.alloc(buf, 4096))
-					break;
+					assert(0);
 				auto n = source.pull(buf[]);
+				foreach (ref b; buf[0 .. n])
+					b = b.filter!"pullAlloc";
 				if (sink.commit(n) < 4096)
 					break;
 			}
 		}
 	}
 
-	@pushSink!int @pushSource!int
+	@pushSink!ulong @pushSource!ulong
 	struct TestPushFilter(Sink) {
 		mixin TestStage;
 		Sink sink;
-		size_t push(const(int)[] buf) { return sink.push(buf); }
+		size_t push(const(ulong)[] buf)
+		{
+			return sink.push(buf.map!(filter!"push").array());
+		}
 	}
 
-	@pushSink!int @allocSource!int
+	@pushSink!ulong @allocSource!ulong
 	struct TestPushAllocFilter(Sink) {
 		mixin TestStage;
 		Sink sink;
-		size_t push(const(int)[] buf)
+		size_t push(const(ulong)[] buf)
+		out(result) { assert(result <= buf.length); }
+		body
 		{
-			int[] ob;
+			ulong[] ob;
 			if (!sink.alloc(ob, buf.length))
-				return 0;
-			ob[] = buf[];
-			return sink.commit(ob.length);
+				assert(0);
+			auto len = min(buf.length, ob.length);
+			buf.take(len).map!(filter!"pushAlloc").copy(ob);
+			return sink.commit(len);
 		}
 	}
 
-	@pushSink!int @pullSource!int
+	@pushSink!ulong @pullSource!ulong
 	struct TestPushPullFilter(alias Scheduler) {
 		mixin Scheduler;
 		mixin TestStage;
+		ulong[] buffer;
 
-		size_t push(const(int)[] buf)
+		size_t push(const(ulong)[] buf)
 		{
+			buffer ~= buf.map!(filter!"pushPull").array();
 			if (yield())
 				return 0;
 			return buf.length;
 		}
 
-		size_t pull(int[] buf)
+		size_t pull(ulong[] buf)
 		{
-			if (yield())
-				return 0;
-			buf[] = int.init;
-			return buf.length;
+			size_t n = buf.length;
+			while (buffer.length < n) {
+				if (yield())
+					break;
+			}
+			size_t len = min(n, buffer.length);
+			buf[0 .. len] = buffer[0 .. len];
+			buffer = buffer[len .. $];
+			return len;
 		}
 	}
 
-	@pushSink!int @peekSource!int
+	@pushSink!ulong @peekSource!ulong
 	struct TestPushPeekFilter(alias Scheduler) {
 		mixin Scheduler;
 		mixin TestStage;
+		ulong[] buffer;
 
-		size_t push(const(int)[] buf)
+		size_t push(const(ulong)[] buf)
 		{
+			buffer ~= buf.map!(filter!"pushPeek").array();
 			if (yield())
 				return 0;
 			return buf.length;
 		}
 
-		const(int)[] peek(size_t n)
+		const(ulong)[] peek(size_t n)
 		{
-			if (yield())
-				return null;
-			return new int[n];
+			while (buffer.length < n) {
+				if (yield())
+					break;
+			}
+			return buffer;
 		}
 
-		void consume(size_t n) {}
+		void consume(size_t n)
+		{
+			buffer = buffer[n .. $];
+		}
 	}
 
-	@allocSink!int @allocSource!int
+	@allocSink!ulong @allocSource!ulong
 	struct TestAllocFilter(Sink) {
 		mixin TestStage;
 		Sink sink;
-		bool alloc(ref int[] buf, size_t n) { return sink.alloc(buf, n); }
-		size_t commit(size_t n) { return sink.commit(n); }
+		ulong[] buf;
+
+		bool alloc(ref ulong[] buf, size_t n)
+		{
+			auto r = sink.alloc(buf, n);
+			this.buf = buf;
+			return r;
+		}
+
+		size_t commit(size_t n)
+		{
+			foreach (ref b; buf[0 .. n])
+				b = b.filter!"alloc";
+			return sink.commit(n);
+		}
 	}
 
-	@allocSink!int @pushSource!int
+	@allocSink!ulong @pushSource!ulong
 	struct TestAllocPushFilter(Sink) {
 		mixin TestStage;
 		Sink sink;
-		bool alloc(ref int[] buf, size_t n) { buf = new int[n]; return true; }
-		size_t commit(size_t n) { return sink.push(new int[n]); }
+		ulong[] buffer;
+
+		bool alloc(ref ulong[] buf, size_t n)
+		{
+			buffer = buf = new ulong[n];
+			return true;
+		}
+
+		size_t commit(size_t n)
+		{
+			size_t m = sink.push(buffer[0 .. n].map!(filter!"allocPush").array());
+			buffer = buffer[m .. $];
+			return m;
+		}
 	}
 
-	@allocSink!int @pullSource!int
+	@allocSink!ulong @pullSource!ulong
 	struct TestAllocPullFilter(alias Scheduler) {
 		mixin Scheduler;
 		mixin TestStage;
+		ulong[] buffer;
+		size_t readOffset;
+		size_t writeOffset;
 
-		bool alloc(ref int[] buf, size_t n)
+		bool alloc(ref ulong[] buf, size_t n)
 		{
-			if (yield())
-				return false;
-			buf.length = n;
+			buffer.length = writeOffset + n;
+			buf = buffer[writeOffset .. $];
 			return true;
 		}
 
-		size_t commit(size_t n) { return n; }
-
-		size_t pull(int[] buf)
+		size_t commit(size_t n)
 		{
+			foreach (ref b; buffer[writeOffset .. writeOffset + n])
+				b = b.filter!"allocPull";
+			writeOffset += n;
 			if (yield())
 				return 0;
-			return buf.length;
+			return n;
+		}
+
+		size_t pull(ulong[] buf)
+		{
+			size_t n = buf.length;
+			while (writeOffset - readOffset < n) {
+				if (yield())
+					break;
+			}
+			size_t len = min(n, writeOffset - readOffset);
+			buf[0 .. len] = buffer[readOffset .. readOffset + len];
+			readOffset += len;
+			return len;
 		}
 	}
 
-	@allocSink!int @peekSource!int
+	@allocSink!ulong @peekSource!ulong
 	struct TestAllocPeekFilter(alias Scheduler) {
 		mixin Scheduler;
 		mixin TestStage;
+		ulong[] buffer;
+		size_t readOffset;
+		size_t writeOffset;
 
-		bool alloc(ref int[] buf, size_t n)
+		bool alloc(ref ulong[] buf, size_t n)
 		{
-			if (yield())
-				return 0;
-			buf.length = n;
+			buffer.length = writeOffset + n;
+			buf = buffer[writeOffset .. $];
 			return true;
 		}
 
-		size_t commit(size_t n) { return n; }
-
-		const(int)[] peek(size_t n)
+		size_t commit(size_t n)
 		{
+			foreach (ref b; buffer[writeOffset .. writeOffset + n])
+				b = b.filter!"allocPeek";
+			writeOffset += n;
 			if (yield())
-				return null;
-			return new int[n];
+				return 0;
+			return n;
 		}
 
-		void consume(size_t n) {}
+		const(ulong)[] peek(size_t n)
+		{
+			while (writeOffset - readOffset < n) {
+				if (yield())
+					break;
+			}
+			return buffer[readOffset .. writeOffset];
+		}
+
+		void consume(size_t n)
+		{
+			readOffset += n;
+		}
 	}
+
+	string genStage(string filter, string suf)
+	{
+		import std.ascii : toUpper;
+		auto cf = filter[0].toUpper ~ filter[1 .. $];
+		return "pipe!Test" ~ cf ~ suf ~ "(Arg!Test" ~ cf ~ suf ~ "())";
+	}
+
+	string genChain(string filterList)
+	{
+		import std.algorithm : map;
+		import std.array : join, split;
+		auto filters = filterList.split(",");
+		string midstr;
+		if (filters.length > 2)
+			midstr = filters[1 .. $ - 1].map!(f => "." ~ genStage(f, "Filter")).join;
+		return genStage(filters[0], "Source")
+			~ midstr
+			~ "." ~ genStage(filters[$ - 1], "Sink") ~ ";";
+	}
+
+	void testChain(string filterlist, R)(R r)
+		if (isInputRange!R && is(ElementType!R : ulong))
+	{
+		auto input = r.map!(a => ulong(a)).array();
+		logf("Testing %s with %d elements", filterlist, input.length);
+		auto expectedOutput = input.dup;
+		auto filters = filterlist.split(",");
+		if (filters.length > 2) {
+			foreach (filter; filters[1 .. $ - 1]) {
+				auto fm = filterMark(filter);
+				foreach (ref eo; expectedOutput)
+					eo = (eo << 4) | fm;
+			}
+		}
+		foreach(expectedLength; [ size_t(0), input.length / 3, input.length - 1, input.length,
+			input.length + 1, input.length * 5 ]) {
+			outputArray.length = expectedLength;
+			outputArray[] = 0xbadc0ffee0ddf00d;
+			inputArray = input;
+			outputIndex = 0;
+			mixin(genChain(filterlist));
+			auto len = min(outputIndex, expectedLength, input.length);
+			uint left = 8;
+			size_t all = 0;
+			if (outputIndex != min(expectedLength, input.length)) {
+				errorf("Output length is %d, expected %d", outputIndex, min(expectedLength, input.length));
+				assert(0);
+			}
+			for (size_t i = 0; i < len; i++) {
+				if (expectedOutput[i] != outputArray[i]) {
+					if (left > 0) {
+						logf("expected[%d] != output[%d]: %x vs. %x", i, i, expectedOutput[i], outputArray[i]);
+						--left;
+					}
+					all++;
+				}
+			}
+			if (all > 0) {
+				logf("%s", genChain(filterlist));
+				logf("total: %d differences", all);
+			}
+			assert(all == 0);
+		}
+	}
+
+	void testChain(string filterlist)()
+	{
+		import std.range : iota;
+		testChain!filterlist(iota(0, 173447));
+	}
+
 }
 
 struct SinkDrivenFiberScheduler {
@@ -738,10 +992,10 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 unittest {
 	auto p1 = pipe!TestPeekSource(Arg!TestPeekSource());
 	static assert(isPeekPipeline!(typeof(p1)));
-	static assert(is(p1.ElementType == int));
+	static assert(is(p1.ElementType == ulong));
 	auto p2 = pipe!TestPullSource(Arg!TestPullSource());
 	static assert(isPullPipeline!(typeof(p2)));
-	static assert(is(p2.ElementType == int));
+	static assert(is(p2.ElementType == ulong));
 }
 
 unittest {
@@ -752,292 +1006,118 @@ unittest {
 }
 
 unittest {
-	// compatible source - sink pairs
-	pipe!TestPeekSource(Arg!TestPeekSource()).pipe!TestPeekSink(Arg!TestPeekSink());
-	pipe!TestPullSource(Arg!TestPullSource()).pipe!TestPullSink(Arg!TestPullSink());
-	pipe!TestPushSource(Arg!TestPushSource()).pipe!TestPushSink(Arg!TestPushSink());
-	pipe!TestAllocSource(Arg!TestAllocSource()).pipe!TestAllocSink(Arg!TestAllocSink());
+	// compatible source-sink pairs
+	testChain!`peek,peek`;
+	testChain!`pull,pull`;
+	testChain!`push,push`;
+	testChain!`alloc,alloc`;
+}
+
+unittest {
+	// compatible, with 1 filter
+	testChain!`peek,peek,peek`;
+	testChain!`peek,peekPull,pull`;
+	testChain!`peek,peekPush,push`;
+	testChain!`peek,peekAlloc,alloc`;
+	testChain!`pull,pullPeek,peek`;
+	testChain!`pull,pull,pull`;
+	testChain!`pull,pullPush,push`;
+	testChain!`pull,pullAlloc,alloc`;
+	testChain!`push,pushPeek,peek`;
+	testChain!`push,pushPull,pull`;
+	testChain!`push,push,push`;
+	testChain!`push,pushAlloc,alloc`;
+	testChain!`alloc,allocPeek,peek`;
+	testChain!`alloc,allocPull,pull`;
+	testChain!`alloc,allocPush,push`;
+	testChain!`alloc,alloc,alloc`;
 }
 
 unittest {
 	// just one active sink at the end
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
+	testChain!`peek,peek,peek,peek,peek`;
+	testChain!`peek,peek,peekPull,pull,pull`;
+	testChain!`pull,pull,pull,pull,pull`;
+	testChain!`pull,pull,pullPeek,peek,peek`;
 }
 
 unittest {
 	// just one active source at the beginning
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
+	testChain!`push,push,push,push,push`;
+	testChain!`push,push,pushAlloc,alloc,alloc`;
+	testChain!`alloc,alloc,alloc,alloc,alloc`;
+	testChain!`alloc,alloc,allocPush,push,push`;
 }
 
 unittest {
-	// passive to active
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
+	// convert passive source to active source, longer chains
+	testChain!`pull,pullPeek,peekAlloc,allocPush,push`;
+	testChain!`pull,pullPeek,peekPush,pushAlloc,alloc`;
+	testChain!`peek,peekPull,pullPush,pushAlloc,alloc`;
+	testChain!`peek,peekPull,pullAlloc,allocPush,push`;
 }
 
 unittest {
-	// passive to active, longer chains
-	// pull - peek - alloc - push
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
-		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
-		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	// peek - pull - push - alloc
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
-		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
-		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
+	// convert active source to passive source at stage 2, longer passive source chain
+	testChain!`push,pushPull,pull,pull,pullPeek,peek,peekPush,push,push`;
 }
 
 unittest {
-	// active to passive, simple
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-}
-
-unittest {
-	// longer passive source chain
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-}
-
-unittest {
-	// longer active source chain
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
+	// convert active source to passive source at stage >2 (longer active source chain)
+	testChain!`push,push,pushPull,pull`;
+	testChain!`push,push,push,push,push,pushPull,pull`;
+	testChain!`push,push,pushAlloc,alloc,alloc,allocPeek,peek`;
 }
 
 unittest {
 	// multiple inverters
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestAllocSource(Arg!TestAllocSource())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocPeekFilter(Arg!TestAllocPeekFilter())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
-		.pipe!TestAllocFilter(Arg!TestAllocFilter())
-		.pipe!TestAllocPushFilter(Arg!TestAllocPushFilter())
-		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
-		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
-		.pipe!TestAllocPullFilter(Arg!TestAllocPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
+	testChain!`alloc,allocPeek,peekPush,pushPull,pull`;
+	testChain!`alloc,alloc,alloc,allocPeek,peek,peekPush,push,pushPull,pull`;
+	testChain!`alloc,alloc,allocPeek,peekPush,pushPull,pull`;
+	testChain!`alloc,alloc,alloc,allocPeek,peekPush,pushPull,pullPush,push,pushAlloc,alloc,allocPush,pushPeek,peekAlloc,allocPull,pull`;
 }
 
 unittest {
 	// implicit adapters, pull->push
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
+	testChain!`pull,push`;
+	testChain!`pull,push,push`;
+	testChain!`pull,pushPeek,peek`;
+	testChain!`pull,pushPull,pull`;
+	testChain!`pull,pushAlloc,alloc`;
 }
 
 unittest {
 	// implicit adapters, pull->peek
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPeekFilter(Arg!TestPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPullSource(Arg!TestPullSource())
-		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
+	testChain!`pull,peek`;
+	testChain!`pull,peekPush,push`;
+	testChain!`pull,peek,peek`;
+	testChain!`pull,peekPull,pull`;
+	testChain!`pull,peekAlloc,alloc`;
 }
 
 unittest {
 	// implicit adapters, push->pull
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPushSource(Arg!TestPushSource())
-		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
+	testChain!`push,pull`;
+	testChain!`push,pullPush,push`;
+	testChain!`push,pullAlloc,alloc`;
+	testChain!`push,pullPeek,peek`;
+	testChain!`push,pull,pull`;
 }
 
 unittest {
 	// implicit adapters, peek->pull
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPullFilter(Arg!TestPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPullAllocFilter(Arg!TestPullAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPullPeekFilter(Arg!TestPullPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPullPushFilter(Arg!TestPullPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
+	testChain!`peek,pull`;
+	testChain!`peek,pullPush,push`;
+	testChain!`peek,pullAlloc,alloc`;
+	testChain!`peek,pullPeek,peek`;
+	testChain!`peek,pull,pull`;
 }
 
 unittest {
 	// implicit adapters, peek->push
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPushFilter(Arg!TestPushFilter())
-		.pipe!TestPushSink(Arg!TestPushSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPushAllocFilter(Arg!TestPushAllocFilter())
-		.pipe!TestAllocSink(Arg!TestAllocSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPushPeekFilter(Arg!TestPushPeekFilter())
-		.pipe!TestPeekSink(Arg!TestPeekSink());
-
-	pipe!TestPeekSource(Arg!TestPeekSource())
-		.pipe!TestPushPullFilter(Arg!TestPushPullFilter())
-		.pipe!TestPullSink(Arg!TestPullSink());
+	testChain!`peek,push`;
+	testChain!`peek,push,push`;
+	testChain!`peek,pushAlloc,alloc`;
+	testChain!`peek,pushPeek,peek`;
+	testChain!`peek,pushPull,pull`;
 }
