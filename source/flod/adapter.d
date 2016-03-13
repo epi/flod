@@ -8,7 +8,6 @@ module flod.adapter;
 
 import flod.pipeline;
 import flod.traits;
-import flod.meta;
 
 private template DefaultPullPeekAdapter(Buffer, E) {
 	@pullSink!E @peekSource!E
@@ -18,8 +17,7 @@ private template DefaultPullPeekAdapter(Buffer, E) {
 
 		this()(auto ref Buffer buffer)
 		{
-			import flod.meta : moveIfNonCopyable;
-			this.buffer = moveIfNonCopyable(buffer);
+			this.buffer = buffer;
 		}
 
 		const(E)[] peek(size_t size)
@@ -267,7 +265,7 @@ private template DefaultPushPullAdapter(Buffer, E) {
 
 		this()(auto ref Buffer buffer)
 		{
-			this.buffer = moveIfNonCopyable(buffer);
+			this.buffer = buffer;
 		}
 
 		size_t push(const(E)[] buf)
