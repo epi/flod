@@ -955,6 +955,28 @@ unittest {
 }
 
 unittest {
+	// implicit adapters, pull->peek
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPeekFilter(Arg!TestPeekFilter())
+		.pipe!TestPeekSink(Arg!TestPeekSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPeekAllocFilter(Arg!TestPeekAllocFilter())
+		.pipe!TestAllocSink(Arg!TestAllocSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPeekPushFilter(Arg!TestPeekPushFilter())
+		.pipe!TestPushSink(Arg!TestPushSink());
+
+	pipe!TestPullSource(Arg!TestPullSource())
+		.pipe!TestPeekPullFilter(Arg!TestPeekPullFilter())
+		.pipe!TestPullSink(Arg!TestPullSink());
+}
+
+unittest {
 	// implicit adapters, push->pull
 	pipe!TestPushSource(Arg!TestPushSource())
 		.pipe!TestPullSink(Arg!TestPullSink());
