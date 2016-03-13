@@ -830,8 +830,6 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
 			.str!NextStage ~ " expects " ~ SinkE.stringof);
 
-		debug alias X = whatIsAppended!(Pipeline, NextStage);
-
 		static if (areCompatible!(LastStage, NextStage)) {
 			static if (isPassiveSource!Stage) {
 				auto result = pipeline!NextStage(this, null, nextArgs);
@@ -927,65 +925,9 @@ enum isAllocPipeline(P) = isPipeline!(P, isAllocSource);
 
 enum isPipeline(P) = isPushPipeline!P || isPullPipeline!P || isPeekPipeline!P || isAllocPipeline!P;
 
-
-// this is only used to check if all possible tuples (pipeline, stage sink, stage source) are tested
-debug private struct PrintWia(string a, string b, string c) {
-	pragma(msg, "  Append:  \x1b[31;1m", a, "\x1b[0m:\x1b[33;1m", b, "\x1b[0m:\x1b[32;1m", c, "\x1b[0m");
-}
-
-private template whatIsAppended(P, alias S, string file = __FILE__) {
-	debug {
-		static if (file != "source/flod/pipeline.d") {
-			alias whatIsAppended = void;
-		} else {
-			static if (isPeekPipeline!P)
-				enum pipelineMethod = "peek";
-			else static if (isPullPipeline!P)
-				enum pipelineMethod = "pull";
-			else static if (isPushPipeline!P)
-				enum pipelineMethod = "push";
-			else static if (isAllocPipeline!P)
-				enum pipelineMethod = "alloc";
-			else static if (!is(P == void))
-				enum pipelineMethod = "(?" ~ str!P ~ ")";
-			else
-				enum pipelineMethod = "";
-
-			static if (isPeekSink!S)
-				enum sinkMethod = "peek";
-			else static if (isPullSink!S)
-				enum sinkMethod = "pull";
-			else static if (isPushSink!S)
-				enum sinkMethod = "push";
-			else static if (isAllocSink!S)
-				enum sinkMethod = "alloc";
-			else
-				enum sinkMethod = "";
-
-			static if (isPeekSource!S)
-				enum sourceMethod = "peek";
-			else static if (isPullSource!S)
-				enum sourceMethod = "pull";
-			else static if (isPushSource!S)
-				enum sourceMethod = "push";
-			else static if (isAllocSource!S)
-				enum sourceMethod = "alloc";
-			else static if (sinkMethod == "")
-				enum sourceMethod = "(?" ~ str!S ~ ")";
-			else
-				enum sourceMethod =".";
-
-			alias whatIsAppended = PrintWia!(pipelineMethod, sinkMethod, sourceMethod);
-		}
-	} else {
-		alias whatIsAppended = void;
-	}
-}
-
 auto pipe(alias Stage, Args...)(auto ref Args args)
 	if (isSink!Stage || isSource!Stage)
 {
-	alias X = whatIsAppended!(void, Stage);
 	return pipeline!Stage(null, null, args);
 }
 
