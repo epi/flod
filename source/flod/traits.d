@@ -6,7 +6,7 @@
  */
 module flod.traits;
 
-import flod.meta : str;
+import flod.meta : str, Id;
 
 struct PullSource(E) {
 	size_t pull(E[] buf) { return buf.length; }
@@ -57,8 +57,6 @@ enum pushSink(E) = PushSink!E();
 enum allocSink(E) = AllocSink!E();
 
 private struct None {}
-
-private struct Id(S...) {}
 
 private template isSame(alias S) {
 	template isSame(alias Z) {
