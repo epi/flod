@@ -11,10 +11,8 @@ named flod-xxx.
 
 ## Examples
 
-See the examples directory. Currently there is one example, replaying mp3 files using MAD.
-Extra packages are required to build it. They are not in dub repository yet, so they need to
-be downloaded manually: [flod-alsa](https://github.com/epi/flod-alsa) and
-[flod-mad](https://github.com/epi/flod-mad).
+To see what can be done with flod, see the examples found in
+[this repo](https://github.com/epi/flod-examples).
 
 ## License
 
