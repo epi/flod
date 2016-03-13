@@ -155,10 +155,12 @@ auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t
 private template DefaultPushPullAdapter(Buffer, E) {
 	@pushSink!E @pullSource!E
 	struct DefaultPushPullAdapter(alias Scheduler) {
+		import std.algorithm : min;
+
 		mixin Scheduler;
 
 		Buffer buffer;
-		const(void)[] pushed;
+		const(E)[] pushed;
 
 		this()(auto ref Buffer buffer) {
 			this.buffer = moveIfNonCopyable(buffer);
@@ -168,14 +170,13 @@ private template DefaultPushPullAdapter(Buffer, E) {
 		{
 			if (pushed.length > 0)
 				return 0;
-			pushed = cast(const(void)[]) buf;
+			pushed = buf;
 			yield();
 			return buf.length;
 		}
 
 		private E[] pullFromBuffer(E[] dest)
 		{
-			import std.algorithm : min;
 			auto src = buffer.peek!E();
 			auto len = min(src.length, dest.length);
 			if (len > 0) {
@@ -186,7 +187,6 @@ private template DefaultPushPullAdapter(Buffer, E) {
 			return dest;
 		}
 
-		// FIXME: unsafe, type information is lost between push and pull
 		size_t pull(E[] dest)
 		{
 			size_t requestedLength = dest.length;
@@ -196,34 +196,30 @@ private template DefaultPushPullAdapter(Buffer, E) {
 				return requestedLength;
 			// if not satisfied yet, switch to source fiber till push() is called again
 			// enough times to fill dest[]
-			auto untyped = cast(void[]) dest;
 			do {
-				import std.algorithm : min;
 				if (yield())
 					break;
-
 				// pushed is the slice of the original buffer passed to push() by the source.
-				auto len = min(pushed.length, untyped.length);
+				auto len = min(pushed.length, dest.length);
 				assert(len > 0);
-				untyped.ptr[0 .. len] = pushed[0 .. len];
-				untyped = untyped[len .. $];
+				dest[0 .. len] = pushed[0 .. len];
+				dest = dest[len .. $];
 				pushed = pushed[len .. $];
-			} while (untyped.length > 0);
+			} while (dest.length > 0);
 
 			// whatever's left in pushed, keep it in buffer for the next time pull() is called
 			while (pushed.length > 0) {
-				import std.algorithm : min;
-				auto b = buffer.alloc!void(pushed.length);
+				auto b = buffer.alloc!E(pushed.length);
 				if (b.length == 0) {
 					import core.exception : OutOfMemoryError;
 					throw new OutOfMemoryError();
 				}
 				auto len = (b.length, pushed.length);
 				b[0 .. len] = pushed[0 .. len];
-				buffer.commit!void(len);
+				buffer.commit!E(len);
 				pushed = pushed[len .. $];
 			}
-			return requestedLength - untyped.length / E.sizeof;
+			return requestedLength - dest.length;
 		}
 	}
 }
