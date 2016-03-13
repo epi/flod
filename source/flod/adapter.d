@@ -402,3 +402,49 @@ auto allocPull(Pipeline)(auto ref Pipeline pipeline)
 	import flod.buffer : movingBuffer;
 	return pipeline.allocPull(movingBuffer());
 }
+
+private template DefaultAllocPushAdapter(Buffer, E) {
+	@allocSink!E @pushSource!E
+	struct DefaultAllocPushAdapter(Sink) {
+		Sink sink;
+		Buffer buffer;
+
+		this()(auto ref Buffer buffer)
+		{
+			this.buffer = buffer;
+		}
+
+		bool alloc(ref E[] buf, size_t n)
+		{
+			buf = buffer.alloc!E(n);
+			if (!buf || buf.length < n)
+				return false;
+			return true;
+		}
+
+		size_t commit(size_t n)
+		{
+			buffer.commit!E(n);
+			sink.push(buffer.peek!E[0 .. n]);
+			buffer.consume!E(n);
+			return n;
+		}
+	}
+}
+
+///
+auto allocPush(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+	if (isAllocPipeline!Pipeline)
+{
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultAllocPushAdapter!(Buffer, E);
+	return pipeline.pipe!PP(buffer);
+}
+
+///
+auto allocPush(Pipeline)(auto ref Pipeline pipeline)
+	if (isAllocPipeline!Pipeline)
+{
+	import flod.buffer : movingBuffer;
+	return pipeline.allocPush(movingBuffer());
+}
