@@ -255,6 +255,24 @@ private template ImplementPeekConsume(E) {
 	}
 }
 
+private template ImplementAllocCommit(E) {
+	bool alloc(ref E[] buf, size_t n)
+	{
+		buf = buffer.alloc!E(n);
+		if (!buf || buf.length < n)
+			return false;
+		return true;
+	}
+
+	size_t commit(size_t n)
+	{
+		buffer.commit!E(n);
+		if (yield())
+			return 0;
+		return n;
+	}
+}
+
 private template DefaultPushPeekAdapter(Buffer, E) {
 	@pushSink!E @peekSource!E
 	struct DefaultPushPeekAdapter(alias Scheduler) {
@@ -314,22 +332,7 @@ private template DefaultAllocPeekAdapter(Buffer, E) {
 			this.buffer = buffer;
 		}
 
-		bool alloc(ref E[] buf, size_t n)
-		{
-			buf = buffer.alloc!E(n);
-			if (!buf || buf.length < n)
-				return false;
-			return true;
-		}
-
-		size_t commit(size_t n)
-		{
-			buffer.commit!E(n);
-			if (yield())
-				return 0;
-			return n;
-		}
-
+		mixin ImplementAllocCommit!E;
 		mixin ImplementPeekConsume!E;
 	}
 }
@@ -349,4 +352,53 @@ auto allocPeek(Pipeline)(auto ref Pipeline pipeline)
 {
 	import flod.buffer : movingBuffer;
 	return pipeline.allocPeek(movingBuffer());
+}
+
+private template DefaultAllocPullAdapter(Buffer, E) {
+	@allocSink!E @pullSource!E
+	struct DefaultAllocPullAdapter(alias Scheduler) {
+		import std.algorithm : min;
+		mixin Scheduler;
+		Buffer buffer;
+
+		this()(auto ref Buffer buffer)
+		{
+			this.buffer = buffer;
+		}
+
+		mixin ImplementAllocCommit!E;
+
+		size_t pull(E[] buf)
+		{
+			const(E)[] ib;
+			for (;;) {
+				ib = buffer.peek!E;
+				if (ib.length >= buf.length)
+					break;
+				if (yield())
+					break;
+			}
+			auto len = min(ib.length, buf.length);
+			buf[0 .. len] = ib[0 .. len];
+			buffer.consume!E(len);
+			return len;
+		}
+	}
+}
+
+///
+auto allocPull(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+	if (isAllocPipeline!Pipeline)
+{
+	alias E = Pipeline.ElementType;
+	alias PP = DefaultAllocPullAdapter!(Buffer, E);
+	return pipeline.pipe!PP(buffer);
+}
+
+///
+auto allocPull(Pipeline)(auto ref Pipeline pipeline)
+	if (isAllocPipeline!Pipeline)
+{
+	import flod.buffer : movingBuffer;
+	return pipeline.allocPull(movingBuffer());
 }
