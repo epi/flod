@@ -1184,3 +1184,8 @@ unittest {
 	testChain!`alloc,pushPeek,peek`;
 	testChain!`alloc,pushPull,pull`;
 }
+
+unittest {
+	// implicit adapters, all in one pipeline
+	testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,peek`;
+}
