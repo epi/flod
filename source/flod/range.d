@@ -6,9 +6,9 @@
  */
 module flod.range;
 
-import std.range : isInputRange;
+import std.range : isInputRange, isOutputRange;
 
-import flod.pipeline : pipe;
+import flod.pipeline : pipe, isPipeline;
 import flod.traits;
 
 package auto pipeFromArray(E)(const(E)[] array)
@@ -124,4 +124,36 @@ unittest {
 	assert(pl.pull(buf[]) == 5);
 	assert(buf[] == [0, 1, 2, 3, 4]);
 	assert(pl.pull(new int[1234567]) == 99);
+}
+
+public auto copy(Pipeline, R)(auto ref Pipeline pipeline, R outputRange)
+	if (isPipeline!Pipeline && isOutputRange!(R, Pipeline.ElementType))
+{
+	import std.range : put;
+
+	alias E = Pipeline.ElementType;
+
+	@pushSink!E
+	static struct Copy {
+		R range;
+
+		this()(R range) { this.range = range; }
+
+		size_t push()(const(E)[] buf)
+		{
+			put(range, buf);
+			return buf.length;
+		}
+	}
+
+	return pipeline.pipe!Copy(outputRange);
+}
+
+unittest {
+	import std.array : appender;
+	import std.range : iota;
+
+	auto app = appender!(int[]);
+	iota(89, 94).pipeFromInputRange.copy(app);
+	assert(app.data[] == [89, 90, 91, 92, 93]);
 }
