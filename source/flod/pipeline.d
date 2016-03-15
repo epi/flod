@@ -910,20 +910,20 @@ private auto pipeline(alias Stage, SoP, SiP, A...)(auto ref SoP sourcePipeline, 
 	return Pipeline!(Stage, SoP, SiP, A)(sourcePipeline, sinkPipeline, args);
 }
 
-private template isPipeline(P, alias test) {
+private template testPipeline(P, alias test) {
 	static if (is(P == Pipeline!A, A...))
-		enum isPipeline = test!(P.LastStage);
+		enum testPipeline = test!(P.LastStage);
 	else
-		enum isPipeline = false;
+		enum testPipeline = false;
 }
 
-enum isPeekPipeline(P) = isDynamicArray!P || isPipeline!(P, isPeekSource);
+enum isPeekPipeline(P) = isDynamicArray!P || testPipeline!(P, isPeekSource);
 
-enum isPullPipeline(P) = isInputRange!P || isPipeline!(P, isPullSource);
+enum isPullPipeline(P) = isInputRange!P || testPipeline!(P, isPullSource);
 
-enum isPushPipeline(P) = isPipeline!(P, isPushSource);
+enum isPushPipeline(P) = testPipeline!(P, isPushSource);
 
-enum isAllocPipeline(P) = isPipeline!(P, isAllocSource);
+enum isAllocPipeline(P) = testPipeline!(P, isAllocSource);
 
 enum isPipeline(P) = isPushPipeline!P || isPullPipeline!P || isPeekPipeline!P || isAllocPipeline!P;
 
