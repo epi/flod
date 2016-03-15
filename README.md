@@ -65,6 +65,15 @@ Some of them are already under development:
 To see what can be done with *flod*, see the examples found in
 [this repo](https://github.com/epi/flod-examples).
 
+## Release history
+
+- v0.0.2 (2016-03-15)
+  - Can use built-in arrays and input ranges as pipeline sources.
+  - Can use output ranges as pipeline sinks.
+
+- v0.0.1 (2016-03-13)
+  - Fisrt release – can connect pipes with any interfaces (even incompatible).
+
 ## License
 
 *flod* is licensed under Boost Software License v1.0, see the file COPYING for details.
