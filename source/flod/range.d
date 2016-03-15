@@ -55,26 +55,13 @@ package auto pipeFromInputRange(R)(R r)
 
 		size_t pull()(E[] buf)
 		{
-			import std.range : hasSlicing, hasLength, isInfinite;
-			static if (hasSlicing!R && (hasLength!R || isInfinite!R)) {
-				import std.range : popFrontN;
-				import std.algorithm : copy, min;
-				static if (hasLength!R)
-					size_t len = min(buf.length, range.length);
-				else static if (isInfinite!R)
-					size_t len = buf.length;
-				range[0 .. len].copy(buf);
-				range.popFrontN(len);
-				return len;
-			} else {
-				foreach (i, ref e; buf) {
-					if (range.empty)
-						return i;
-					e = range.front;
-					range.popFront();
-				}
-				return buf.length;
+			foreach (i, ref e; buf) {
+				if (range.empty)
+					return i;
+				e = range.front;
+				range.popFront();
 			}
+			return buf.length;
 		}
 	}
 
