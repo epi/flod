@@ -6,9 +6,12 @@
  */
 module flod.pipeline;
 
-public import std.typecons : Flag, Yes, No;
-import flod.traits;
+import std.range : isDynamicArray, isInputRange;
+import std.typecons : Flag, Yes, No;
+
 import flod.meta : NonCopyable, str;
+import flod.range;
+import flod.traits;
 
 version(unittest) {
 	import std.algorithm : min, max, map, copy;
@@ -623,7 +626,6 @@ version(unittest) {
 }
 
 struct SinkDrivenFiberScheduler {
-	import std.stdio;
 	import core.thread : Fiber;
 	Fiber fiber;
 	mixin NonCopyable;
@@ -903,32 +905,38 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 	}
 }
 
-auto pipeline(alias Stage, SoP, SiP, A...)(auto ref SoP sourcePipeline, auto ref SiP sinkPipeline, auto ref A args)
+private auto pipeline(alias Stage, SoP, SiP, A...)(auto ref SoP sourcePipeline, auto ref SiP sinkPipeline, auto ref A args)
 {
 	return Pipeline!(Stage, SoP, SiP, A)(sourcePipeline, sinkPipeline, args);
 }
 
-template isPipeline(P, alias test) {
+private template testPipeline(P, alias test) {
 	static if (is(P == Pipeline!A, A...))
-		enum isPipeline = test!(P.LastStage);
+		enum testPipeline = test!(P.LastStage);
 	else
-		enum isPipeline = false;
+		enum testPipeline = false;
 }
 
-enum isPeekPipeline(P) = isPipeline!(P, isPeekSource);
+enum isPeekPipeline(P) = isDynamicArray!P || testPipeline!(P, isPeekSource);
 
-enum isPullPipeline(P) = isPipeline!(P, isPullSource);
+enum isPullPipeline(P) = isInputRange!P || testPipeline!(P, isPullSource);
 
-enum isPushPipeline(P) = isPipeline!(P, isPushSource);
+enum isPushPipeline(P) = testPipeline!(P, isPushSource);
 
-enum isAllocPipeline(P) = isPipeline!(P, isAllocSource);
+enum isAllocPipeline(P) = testPipeline!(P, isAllocSource);
 
 enum isPipeline(P) = isPushPipeline!P || isPullPipeline!P || isPeekPipeline!P || isAllocPipeline!P;
 
+///
 auto pipe(alias Stage, Args...)(auto ref Args args)
 	if (isSink!Stage || isSource!Stage)
 {
-	return pipeline!Stage(null, null, args);
+	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
+		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
+	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
+		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
+	else
+		return pipeline!Stage(null, null, args);
 }
 
 unittest {
@@ -1130,4 +1138,29 @@ unittest {
 unittest {
 	// implicit adapters, all in one pipeline
 	testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,peek`;
+}
+
+unittest {
+	auto array = [ 1UL, 0xdead, 6 ];
+	assert(isPeekPipeline!(typeof(array)));
+	outputArray.length = 4;
+	outputIndex = 0;
+	array.pipe!TestPeekSink();
+	assert(outputArray[0 .. outputIndex] == array[]);
+}
+
+unittest {
+	import std.range : iota, array, take;
+	import std.algorithm : equal;
+	auto r = iota(37UL, 1337);
+	static assert(isPullPipeline!(typeof(r)));
+	outputArray.length = 5000;
+	outputIndex = 0;
+	r.pipe!TestPullSink();
+	assert(outputArray[0 .. outputIndex] == iota(37, 1337).array());
+	r = iota(55UL, 1555);
+	outputArray.length = 20;
+	outputIndex = 0;
+	r.pipe!TestPullSink();
+	assert(outputArray[0 .. outputIndex] == iota(55, 1555).take(20).array());
 }
