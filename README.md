@@ -64,6 +64,15 @@ Some of them are already under development:
 To see what can be done with *flod*, see the examples found in
 [this repo](https://github.com/epi/flod-examples).
 
+## Similar libraries
+
+There are several libraries in D and other languages which share some goals with *flod*.
+
+- [iopipe](https://github.com/schveiguy/iopipe) – Steven Schveighoffer's D library for modular IO.
+- [IO Streams](https://github.com/jasonwhite/io) – Jason White's IO stream library for D.
+- [Boost.Iostreams](http://www.boost.org/libs/iostreams) – composable streams in C++.
+- [GStreamer](https://gstreamer.freedesktop.org/) – C library for constructing graphs of media-handling components.
+
 ## Release history
 
 - v0.0.2 (2016-03-15)
