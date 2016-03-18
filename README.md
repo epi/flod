@@ -2,7 +2,6 @@
 # flod
 
 *flod* is a D library implementing the pipeline pattern with compile-time pipeline composition.
-API documentation is available [here](http://epi.github.io/flod/ddox/flod.html).
 
 ## Goals
 
