@@ -96,3 +96,8 @@ unittest {
 	assert(tag.get!32 == "baz");
 	assert(tag.get!33 == "quux");
 }
+
+struct NullMetadata {
+	enum bool isGetter(alias S) = false;
+	enum bool isSetter(alias S) = false;
+}

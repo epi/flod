@@ -10,6 +10,7 @@ import std.range : isDynamicArray, isInputRange;
 import std.typecons : Flag, Yes, No;
 
 import flod.meta : NonCopyable, str;
+import flod.metadata;
 import flod.range;
 import flod.traits;
 
@@ -668,7 +669,7 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-mixin template Context(alias _Stage, size_t index, _Src = typeof(null), _Snk = typeof(null)) {
+mixin template Context(alias _Stage, size_t index, _Metadata, _Src = typeof(null), _Snk = typeof(null)) {
 	import flod.pipeline;
 	alias Stage = _Stage;
 	static if (!is(_Src == typeof(null))) {
@@ -691,6 +692,19 @@ mixin template Context(alias _Stage, size_t index, _Src = typeof(null), _Snk = t
 		}
 		void stop()() { _flod_scheduler.stop(); }
 	}
+	static if (_Metadata.isGetter!index || _Metadata.isSetter!index)
+		_Metadata* _flod_metadata;
+	static if (_Metadata.isGetter!index) {
+		_Metadata.ValueType!key get(string key)() {
+			return _Metadata.get!(index, key);
+		}
+	}
+	static if (_Metadata.isSetter!index) {
+		_Metadata.ValueType!key get(string key)() {
+			return _Metadata.get!(index, key);
+		}
+	}
+
 }
 
 // forwards all calls to its impl
@@ -738,8 +752,8 @@ private template Inverter(alias Stage) {
 	alias E = Traits!Stage.SinkElementType;
 	static if (isPullSource!Stage) {
 		@pullSource!E
-		struct Inverter(alias Context, alias St, size_t index, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, index, So, Si);
+		struct Inverter(alias Context, alias St, size_t index, Md, So = typeof(null), Si = typeof(null)) {
+			mixin Context!(St, index, Md, So, Si);
 
 			~this() { source.sink.stop(); }
 
@@ -753,8 +767,8 @@ private template Inverter(alias Stage) {
 		}
 	} else static if (isPeekSource!Stage) {
 		@peekSource!E
-		struct Inverter(alias Context, alias St, size_t index, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, index, So, Si);
+		struct Inverter(alias Context, alias St, size_t index, Md, So = typeof(null), Si = typeof(null)) {
+			mixin Context!(St, index, Md, So, Si);
 
 			~this() { source.sink.stop(); }
 
@@ -835,15 +849,15 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 
 	import flod.meta : isType;
 	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, index, SourceType, SinkType));
+		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType, SinkType));
 	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
-		alias Type = Forward!(Stage!(Context, Stage, index, typeof(null), SinkType), Yes.readFromSink);
+		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, typeof(null), SinkType), Yes.readFromSink);
 	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, index, SourceType));
-	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // && isType!(Stage, Context, Stage, SourceType)) // inverter
-		alias Type = Forward!(Stage!(Context, Stage, index, SourceType));
-	else static if (isType!(Stage, Context, Stage, index))
-		alias Type = Forward!(Stage!(Context, Stage, index));
+		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType));
+	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType))
+		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType));
+	else static if (isType!(Stage, Context, Stage, index, NullMetadata))
+		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata));
 
 	SourcePipeline sourcePipeline;
 	SinkPipeline sinkPipeline;
@@ -940,7 +954,6 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 			}
 		}
 	}
-
 }
 
 private auto pipeline(alias Stage, SoP, SiP, A...)(auto ref SoP sourcePipeline, auto ref SiP sinkPipeline, auto ref A args)
