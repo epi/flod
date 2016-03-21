@@ -668,14 +668,14 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-mixin template Context(alias _Stage, _Src = typeof(null), _Snk = typeof(null)) {
+mixin template Context(alias _Stage, size_t index, _Src = typeof(null), _Snk = typeof(null)) {
 	import flod.pipeline;
 	alias Stage = _Stage;
-	static if (!is(_flod_Src == typeof(null))) {
+	static if (!is(_Src == typeof(null))) {
 		alias Source = _Src;
 		Source source;
 	}
-	static if (!is(_flod_Snk == typeof(null))) {
+	static if (!is(_Snk == typeof(null))) {
 		alias Sink = _Snk;
 		Sink sink;
 	}
@@ -738,8 +738,8 @@ private template Inverter(alias Stage) {
 	alias E = Traits!Stage.SinkElementType;
 	static if (isPullSource!Stage) {
 		@pullSource!E
-		struct Inverter(alias Context, alias St, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, So, Si);
+		struct Inverter(alias Context, alias St, size_t index, So = typeof(null), Si = typeof(null)) {
+			mixin Context!(St, index, So, Si);
 
 			~this() { source.sink.stop(); }
 
@@ -753,8 +753,8 @@ private template Inverter(alias Stage) {
 		}
 	} else static if (isPeekSource!Stage) {
 		@peekSource!E
-		struct Inverter(alias Context, alias St, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, So, Si);
+		struct Inverter(alias Context, alias St, size_t index, So = typeof(null), Si = typeof(null)) {
+			mixin Context!(St, index, So, Si);
 
 			~this() { source.sink.stop(); }
 
@@ -785,68 +785,77 @@ private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 	}
 }
 
+private struct NullPipeline(size_t si) {
+	enum size_t length = 0;
+	enum size_t startIndex = si;
+	enum str = "";
+	enum treeStr(int indent) = "";
+	auto withIndex(size_t newIndex)() { return NullPipeline!newIndex(); }
+}
+
 private struct Pipeline(alias S, SoP, SiP, A...) {
+	import flod.meta : repeat;
 	alias Stage = S;
 	alias Args = A;
 	alias SourcePipeline = SoP;
 	alias SinkPipeline = SiP;
+	enum size_t startIndex = SourcePipeline.startIndex;
+	enum size_t index = startIndex + SourcePipeline.length;
+	enum size_t length  = SourcePipeline.length + 1 + SinkPipeline.length;
 
-	enum bool hasSource = !is(SourcePipeline == typeof(null));
-	enum bool hasSink   = !is(SinkPipeline == typeof(null));
+	enum hasSource = !is(SourcePipeline == NullPipeline!_z, _z...);
+	enum hasSink = !is(SinkPipeline == NullPipeline!_y, _y...);
 
 	static if (hasSource) {
 		alias FirstStage = SourcePipeline.FirstStage;
-		enum sourcePipeStr = SourcePipeline.pipeStr ~ "->";
-		enum sourceTreeStr(int indent) = SourcePipeline.treeStr!(indent + 1) ~ "\n";
-		enum sourceStr = SourcePipeline.str ~ "->";
+		static assert(SourcePipeline.index < index);
 	} else {
 		alias FirstStage = Stage;
-		enum sourcePipeStr = "";
-		enum sourceTreeStr(int indent) = "";
-		enum sourceStr = "";
 	}
 
 	static if (hasSink) {
 		alias LastStage = SinkPipeline.LastStage;
-		enum sinkPipeStr = "->" ~ SinkPipeline.pipeStr;
-		enum sinkTreeStr(int indent) = "\n" ~ SinkPipeline.treeStr!(indent + 1);
-		enum sinkStr = "->" ~ SinkPipeline.str;
+		static assert(index < SinkPipeline.index);
 	} else {
 		alias LastStage = Stage;
-		enum sinkPipeStr = "";
-		enum sinkTreeStr(int indent) = "";
-		enum sinkStr = "";
 	}
 
 	static if (is(Traits!LastStage.SourceElementType W))
 		alias ElementType = W;
 
-	enum pipeStr = sourcePipeStr ~ .str!S ~ sinkPipeStr;
-	enum treeStr(int indent) = sourceTreeStr!indent
-		~ "|" ~ repeat!(indent, "-") ~ "-" ~ .str!S
-		~ sinkTreeStr!indent;
-	enum str = "(" ~ sourceStr ~ .str!Stage ~ sinkStr ~ ")";
+	enum treeStr(int indent) = SourcePipeline.treeStr!(indent + 1)
+		~ "|" ~ repeat!(indent, "-") ~ "-" ~ index.to!string ~ ":" ~ .str!S
+		~ "\n" ~ SinkPipeline.treeStr!(indent + 1);
+	enum str = "{" ~ SourcePipeline.str ~ index.to!string ~ ":" ~ .str!Stage ~ SinkPipeline.str ~ "}";
 
-	static if (hasSink && is(SinkPipeline.Type T))
+	static if (is(SinkPipeline.Type T))
 		alias SinkType = T;
-	static if (hasSource && is(SourcePipeline.Type U))
+	static if (is(SourcePipeline.Type U))
 		alias SourceType = U;
 
 	import flod.meta : isType;
 	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, SourceType, SinkType));
+		alias Type = Forward!(Stage!(Context, Stage, index, SourceType, SinkType));
 	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
-		alias Type = Forward!(Stage!(Context, Stage, typeof(null), SinkType), Yes.readFromSink);
+		alias Type = Forward!(Stage!(Context, Stage, index, typeof(null), SinkType), Yes.readFromSink);
 	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, SourceType));
+		alias Type = Forward!(Stage!(Context, Stage, index, SourceType));
 	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType)) // && isType!(Stage, Context, Stage, SourceType)) // inverter
-		alias Type = Forward!(Stage!(Context, Stage, SourceType));
-	else static if (isType!(Stage, Context, Stage))
-		alias Type = Forward!(Stage!(Context, Stage));
+		alias Type = Forward!(Stage!(Context, Stage, index, SourceType));
+	else static if (isType!(Stage, Context, Stage, index))
+		alias Type = Forward!(Stage!(Context, Stage, index));
 
 	SourcePipeline sourcePipeline;
 	SinkPipeline sinkPipeline;
 	Args args;
+
+	private auto withIndex(size_t newIndex)()
+	{
+		return pipeline!S(
+			sourcePipeline.withIndex!newIndex,
+			sinkPipeline.withIndex!(newIndex + SourcePipeline.length + 1),
+			args);
+	}
 
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
@@ -857,34 +866,38 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 			.str!NextStage ~ " expects " ~ SinkE.stringof);
 
 		static if (areCompatible!(LastStage, NextStage)) {
+			enum np = NullPipeline!0();
 			static if (isPassiveSource!Stage) {
-				auto result = pipeline!NextStage(this, null, nextArgs);
+				auto result = pipeline!NextStage(this, np, nextArgs);
 			} else {
 				static assert(isActiveSource!Stage);
 				static if (isPassiveSink!NextStage && isPassiveSource!NextStage) {
 					static if (isPassiveSink!Stage) {
 						static assert(!hasSource);
 						static if (hasSink) {
-							auto result = pipeline!Stage(null, sinkPipeline.pipe!NextStage(nextArgs), args);
+							auto result = pipeline!Stage(np,
+								sinkPipeline.pipe!NextStage(nextArgs).withIndex!(index + 1), args);
 						} else {
-							auto result = pipeline!Stage(null, pipeline!NextStage(null, null, nextArgs), args);
+							auto result = pipeline!Stage(np,
+								pipeline!NextStage(np, np, nextArgs).withIndex!(index + 1), args);
 						}
 					} else {
 						static if (hasSink) {
 							auto result = pipeline!(Inverter!NextStage)(
-								pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args),
-								null);
+								pipeline!Stage(sourcePipeline,
+									sinkPipeline.pipe!NextStage(nextArgs).withIndex!(index + 1), args), np);
 						} else {
 							auto result = pipeline!(Inverter!NextStage)(
-								pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args),
-								null);
+								pipeline!Stage(sourcePipeline,
+									pipeline!NextStage(np, np, nextArgs).withIndex!(index + 1), args), np);
 						}
 					}
 				} else {
 					static if (hasSink)
 						auto result = pipeline!Stage(sourcePipeline, sinkPipeline.pipe!NextStage(nextArgs), args);
 					else
-						auto result = pipeline!Stage(sourcePipeline, pipeline!NextStage(null, null, nextArgs), args);
+						auto result = pipeline!Stage(sourcePipeline,
+							pipeline!NextStage(np, np, nextArgs).withIndex!(index + 1), args);
 				}
 			}
 			static if (isSource!NextStage || isSink!FirstStage)
@@ -902,9 +915,9 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 	static if (is(Type)) {
 		void construct()(ref Type t)
 		{
-			static if (hasSource)
+			static if (is(SourceType))
 				sourcePipeline.construct(t.source);
-			static if (hasSink)
+			static if (is(SinkType))
 				sinkPipeline.construct(t.sink);
 			constructInPlace(t, args);
 		}
@@ -961,7 +974,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else
-		return pipeline!Stage(null, null, args);
+		return pipeline!Stage(NullPipeline!0(), NullPipeline!0(), args);
 }
 
 unittest {
