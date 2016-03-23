@@ -6,6 +6,7 @@
  */
 module flod.pipeline;
 
+import std.meta : AliasSeq;
 import std.range : isDynamicArray, isInputRange;
 import std.typecons : Flag, Yes, No;
 
@@ -86,13 +87,16 @@ version(unittest) {
 		}
 	}
 
-	@peekSource!ulong
+	@peekSource!ulong @tagSetter!(uint, "test.tag")
 	struct TestPeekSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
 
 		const(ulong)[] peek(size_t n)
 		{
+			set!"test.tag"(42);
+			//get!"test.tag"();/
+			static assert(!__traits(compiles, get!"test.tag"()));
 			auto len = min(max(n, 2909), inputArray.length);
 			return inputArray[0 .. len];
 		}
@@ -464,7 +468,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @pushSource!ulong
+	@allocSink!ulong @pushSource!ulong @tagGetter!(uint, "test.tag")
 	struct TestAllocPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -669,8 +673,9 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-mixin template Context(alias _Stage, size_t index, _Metadata, _Src = typeof(null), _Snk = typeof(null)) {
+mixin template Context(alias _Stage, size_t index, _Metadata, bool topLevel, _Src = typeof(null), _Snk = typeof(null)) {
 	import flod.pipeline;
+	import flod.traits : isPassiveSink, isPassiveSource;
 	alias Stage = _Stage;
 	static if (!is(_Src == typeof(null))) {
 		alias Source = _Src;
@@ -692,19 +697,20 @@ mixin template Context(alias _Stage, size_t index, _Metadata, _Src = typeof(null
 		}
 		void stop()() { _flod_scheduler.stop(); }
 	}
-	static if (_Metadata.isGetter!index || _Metadata.isSetter!index)
+	static if (topLevel)
+		_Metadata _flod_metadata;
+	else static if (_Metadata.isGetter!index || _Metadata.isSetter!index)
 		_Metadata* _flod_metadata;
 	static if (_Metadata.isGetter!index) {
 		_Metadata.ValueType!key get(string key)() {
-			return _Metadata.get!(index, key);
+			return _flod_metadata.get!(key, index);
 		}
 	}
 	static if (_Metadata.isSetter!index) {
-		_Metadata.ValueType!key get(string key)() {
-			return _Metadata.get!(index, key);
+		void set(string key)(_Metadata.ValueType!key value) {
+			_flod_metadata.set!(key, index)(value);
 		}
 	}
-
 }
 
 // forwards all calls to its impl
@@ -752,8 +758,8 @@ private template Inverter(alias Stage) {
 	alias E = Traits!Stage.SinkElementType;
 	static if (isPullSource!Stage) {
 		@pullSource!E
-		struct Inverter(alias Context, alias St, size_t index, Md, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, index, Md, So, Si);
+		struct Inverter(alias Context, A...) {
+			mixin Context!A;
 
 			~this() { source.sink.stop(); }
 
@@ -767,8 +773,8 @@ private template Inverter(alias Stage) {
 		}
 	} else static if (isPeekSource!Stage) {
 		@peekSource!E
-		struct Inverter(alias Context, alias St, size_t index, Md, So = typeof(null), Si = typeof(null)) {
-			mixin Context!(St, index, Md, So, Si);
+		struct Inverter(alias Context, A...) {
+			mixin Context!A;
 
 			~this() { source.sink.stop(); }
 
@@ -805,14 +811,21 @@ private struct NullPipeline(size_t si) {
 	enum str = "";
 	enum treeStr(int indent) = "";
 	auto withIndex(size_t newIndex)() { return NullPipeline!newIndex(); }
+	alias StageSeq = AliasSeq!();
 }
 
 private struct Pipeline(alias S, SoP, SiP, A...) {
+	import std.conv : to;
 	import flod.meta : repeat;
 	alias Stage = S;
 	alias Args = A;
 	alias SourcePipeline = SoP;
 	alias SinkPipeline = SiP;
+
+	alias StageSeq = AliasSeq!(SourcePipeline.StageSeq, Stage, SinkPipeline.StageSeq);
+	alias FirstStage = StageSeq[0];
+	alias LastStage = StageSeq[$ - 1];
+
 	enum size_t startIndex = SourcePipeline.startIndex;
 	enum size_t index = startIndex + SourcePipeline.length;
 	enum size_t length  = SourcePipeline.length + 1 + SinkPipeline.length;
@@ -820,19 +833,11 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 	enum hasSource = !is(SourcePipeline == NullPipeline!_z, _z...);
 	enum hasSink = !is(SinkPipeline == NullPipeline!_y, _y...);
 
-	static if (hasSource) {
-		alias FirstStage = SourcePipeline.FirstStage;
+	static if (hasSource)
 		static assert(SourcePipeline.index < index);
-	} else {
-		alias FirstStage = Stage;
-	}
 
-	static if (hasSink) {
-		alias LastStage = SinkPipeline.LastStage;
+	static if (hasSink)
 		static assert(index < SinkPipeline.index);
-	} else {
-		alias LastStage = Stage;
-	}
 
 	static if (is(Traits!LastStage.SourceElementType W))
 		alias ElementType = W;
@@ -841,23 +846,6 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 		~ "|" ~ repeat!(indent, "-") ~ "-" ~ index.to!string ~ ":" ~ .str!S
 		~ "\n" ~ SinkPipeline.treeStr!(indent + 1);
 	enum str = "{" ~ SourcePipeline.str ~ index.to!string ~ ":" ~ .str!Stage ~ SinkPipeline.str ~ "}";
-
-	static if (is(SinkPipeline.Type T))
-		alias SinkType = T;
-	static if (is(SourcePipeline.Type U))
-		alias SourceType = U;
-
-	import flod.meta : isType;
-	static if (isActiveSource!Stage && isActiveSink!Stage && is(SinkType) && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType, SinkType));
-	else static if (isActiveSource!Stage && !isActiveSink!Stage && is(SinkType))
-		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, typeof(null), SinkType), Yes.readFromSink);
-	else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType));
-	else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType))
-		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata, SourceType));
-	else static if (isType!(Stage, Context, Stage, index, NullMetadata))
-		alias Type = Forward!(Stage!(Context, Stage, index, NullMetadata));
 
 	SourcePipeline sourcePipeline;
 	SinkPipeline sinkPipeline;
@@ -926,32 +914,59 @@ private struct Pipeline(alias S, SoP, SiP, A...) {
 		}
 	}
 
-	static if (is(Type)) {
-		void construct()(ref Type t)
+	template Inst(MT, bool topLevel = false) {
+		static if (hasSink) //is(SinkPipeline.Inst!MT.Type T))
+			alias SinkType = SinkPipeline.Inst!MT.Type; //T;
+		static if (hasSource)//is( U))
+			alias SourceType = SourcePipeline.Inst!MT.Type; //U;
+
+		import flod.meta : isType;
+		static if (isActiveSource!Stage && isActiveSink!Stage) // && is(SinkType) && is(SourceType))
+			alias Type = Forward!(Stage!(Context, Stage, index, MT, topLevel, SourceType, SinkType));
+		else static if (isActiveSource!Stage && !isActiveSink!Stage) // && is(SinkType))
+			alias Type = Forward!(Stage!(Context, Stage, index, MT, topLevel, typeof(null), SinkType), Yes.readFromSink);
+		else static if (!isActiveSource!Stage && isActiveSink!Stage && is(SourceType))
+			alias Type = Forward!(Stage!(Context, Stage, index, MT, topLevel, SourceType));
+		else static if (isPassiveSource!Stage && !isSink!Stage && is(SourceType))
+			alias Type = Forward!(Stage!(Context, Stage, index, MT, topLevel, SourceType));
+		else //static if (isType!(Stage, Context, Stage, index, MT))
+			alias Type = Forward!(Stage!(Context, Stage, index, MT, topLevel));
+
+		void construct()(ref Type t, MT* mt = null)
 		{
+			static if (topLevel)
+				mt = &t._impl._flod_metadata;
 			static if (is(SourceType))
-				sourcePipeline.construct(t.source);
+				sourcePipeline.Inst!MT.construct(t.source, mt);
 			static if (is(SinkType))
-				sinkPipeline.construct(t.sink);
+				sinkPipeline.Inst!MT.construct(t.sink, mt);
 			constructInPlace(t, args);
+			static if (!topLevel && __traits(hasMember, t._impl, "_flod_metadata"))
+				t._impl._flod_metadata = mt;
 		}
+	}
 
-		static if (!isSink!FirstStage && !isSource!LastStage) {
-			void run()()
-			{
-				Type t;
-				construct(t);
-				t.run();
-			}
+	static if (!isSink!FirstStage && !isSource!LastStage) {
+		void run()()
+		{
+			alias PS = FilterTagAttributes!(0, StageSeq);
+			alias MetadataType = Metadata!PS;
+			alias I = Inst!(MetadataType, true);
+			I.Type t;
+			I.construct(t);
+			t.run();
 		}
+	}
 
-		static if (!isSink!FirstStage && !isActiveSource!LastStage) {
-			auto create()()
-			{
-				Type t;
-				construct(t);
-				return t;
-			}
+	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
+		auto create()()
+		{
+			alias PS = FilterTagAttributes!(0, StageSeq);
+			alias MetadataType = Metadata!PS;
+			alias I = Inst!(MetadataType, true);
+			I.Type t;
+			I.construct(t);
+			return t;
 		}
 	}
 }
