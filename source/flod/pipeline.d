@@ -87,15 +87,13 @@ version(unittest) {
 		}
 	}
 
-	@peekSource!ulong @tagSetter!(uint, "test.tag")
+	@peekSource!ulong
 	struct TestPeekSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
 
 		const(ulong)[] peek(size_t n)
 		{
-			tag!"test.tag" = 42;
-			static assert(!__traits(compiles, tag!"test.tag"()));
 			auto len = min(max(n, 2909), inputArray.length);
 			return inputArray[0 .. len];
 		}
@@ -467,7 +465,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @pushSource!ulong @tagGetter!(uint, "test.tag")
+	@allocSink!ulong @pushSource!ulong
 	struct TestAllocPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -698,12 +696,20 @@ mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
 
 	@property void tag(string key)(PL.Metadata.ValueType!key value)
 	{
+		import flod.meta : tupleFromArray;
 		outer.metadata.set!(key, index)(value);
+
+		foreach (i; tupleFromArray!(size_t, PL.Metadata.getters!(key, index))) {
+			static if (__traits(hasMember, typeof(outer.tup[i]), "onChange"))
+				outer.tup[i].onChange!key();
+			else
+				pragma(msg, "Warning: no property `onChange` for stage " ~ .str!(typeof(outer.tup[i])));
+		}
 	}
 
-	@property PL.Metadata.ValueType!key get(string key)()
+	@property PL.Metadata.ValueType!key tag(string key)()
 	{
-		return outer.metadata.get!(key, index)(value);
+		return outer.metadata.get!(key, index);
 	}
 }
 

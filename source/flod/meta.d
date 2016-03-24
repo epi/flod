@@ -112,3 +112,11 @@ auto moveIfNonCopyable(T, string file = __FILE__, int line = __LINE__)(auto ref 
 		return move(t);
 	}
 }
+
+template tupleFromArray(T, T[] arr) {
+	import std.meta : AliasSeq;
+	static if (arr.length)
+		alias tupleFromArray = AliasSeq!(arr[0], tupleFromArray!(T, arr[1 .. $]));
+	else
+		alias tupleFromArray = AliasSeq!();
+}

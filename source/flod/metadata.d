@@ -84,19 +84,36 @@ template FilterTagAttributes(size_t i, StageSeq...)
 }
 
 /// Bundles tag value type, key, and indexes of all setters
-private template TagSpec(T, string k, size_t[] s)
-	if (isSorted(s))
+private template TagSpec(T, string k, size_t[] s, size_t[] g)
+	if (isSorted(s) && isSorted(g))
 {
 	alias Type = T;
 	enum string key = k;
-	enum setters = s;
+	enum size_t[] setters = s;
+	enum size_t[] getters = g;
+	// returns array of getter indexes that should be notified by setter at i
+	enum gettersAt(size_t index) = (size_t i){
+		import std.range : assumeSorted, array;
+		import std.stdio;
+		size_t nextSetter = (setters ~ (size_t.max - 1)).assumeSorted.upperBound(i)[0];
+		return getters.assumeSorted.upperBound(i).lowerBound(nextSetter + 1).array();
+	}(index);
 }
 
-private enum isTagSpec(S...) = is(S[0].Type)
-	&& is(typeof(S[0].key) == string) && is(typeof(S[0].setters) == size_t[]);
+unittest {
+	alias ts = TagSpec!(double, "foo", [ 1, 4, 5, 9, 15 ], [ 2, 4, 8, 9, 10, 11, 16 ]);
+	static assert(ts.gettersAt!1 == [ 2, 4 ]);
+	static assert(ts.gettersAt!4 == []);
+	static assert(ts.gettersAt!5 == [ 8, 9 ]);
+	static assert(ts.gettersAt!9 == [ 10, 11 ]);
+	static assert(ts.gettersAt!15 == [ 16 ]);
+}
+
+private enum isTagSpec(S...) = is(S[0].Type) && is(typeof(S[0].key) == string)
+	&& is(typeof(S[0].setters) == size_t[]) && is(typeof(S[0].getters) == size_t[]);
 
 unittest {
-	static assert( isTagSpec!(TagSpec!(double, "foo", [ 1, 4, 5 ])));
+	static assert( isTagSpec!(TagSpec!(double, "foo", [ 1, 4, 5 ], [ 2 ])));
 	static assert(!isTagSpec!());
 	static assert(!isTagSpec!2);
 	static assert(!isTagSpec!(Id!int));
@@ -114,9 +131,9 @@ template TagSpecByKey(string k, tagSpecs...)
 
 unittest {
 	alias specs = AliasSeq!(
-		TagSpec!(uint, "foo", [ 1, 2, 15 ]),
-		TagSpec!(uint, "bar", [ 5 ]),
-		TagSpec!(uint, "baz", [ 7, 42 ]));
+		TagSpec!(uint, "foo", [ 1, 2, 15 ], [ 4, 6, 20 ]),
+		TagSpec!(uint, "bar", [ 5 ], []),
+		TagSpec!(uint, "baz", [ 7, 42 ], [ 8, 42, 43 ]));
 	alias bar = TagSpecByKey!("bar", specs);
 	static assert(is(Id!bar == Id!(specs[1])));
 }
@@ -134,9 +151,9 @@ template RemoveTagSpecByKey(string k, tagSpecs...)
 
 unittest {
 	alias specs = AliasSeq!(
-		TagSpec!(uint, "foo", [ 1, 2, 15 ]),
-		TagSpec!(uint, "bar", [ 5 ]),
-		TagSpec!(uint, "baz", [ 7, 42 ]));
+		TagSpec!(uint, "foo", [ 1, 2, 15 ], [ 4, 6, 20 ]),
+		TagSpec!(uint, "bar", [ 5 ], []),
+		TagSpec!(uint, "baz", [ 7, 42 ], [ 8, 42, 43 ]));
 	alias nobar = RemoveTagSpecByKey!("bar", specs);
 	static assert(is(Id!nobar == Id!(specs[0], specs[2])));
 }
@@ -167,14 +184,19 @@ template TagSpecSeq(TagAttributeTupleSeq...) {
 		static assert(Spec.length == 0 || is(Spec[0].Type == Type), "Conflicting types for tag `" ~ key ~ "`: "
 			~ str!(Spec[0].Type) ~ " and " ~ str!Type);
 
-		static if (op != TagOp.set)
-			alias TagSpecSeq = Tail;
-		else static if (Spec.length == 0)
-			alias TagSpecSeq = AliasSeq!(TagSpec!(Type, key, [ index ]), Tail);
-		else static if (Spec.length == 1)
-			alias TagSpecSeq = MergeTagSpecs!(TagSpec!(Type, key, [ index ] ~ Spec[0].setters), Tail);
-		else
-			static assert(0, "bug");
+		static if (op == TagOp.set) {
+			static if (Spec.length == 0)
+				alias TagSpecSeq = AliasSeq!(TagSpec!(Type, key, [ index ], []), Tail);
+			else static if (Spec.length == 1)
+				alias TagSpecSeq = MergeTagSpecs!(
+					TagSpec!(Type, key, [ index ] ~ Spec[0].setters, Spec[0].getters), Tail);
+		} else static if (op == TagOp.get) {
+			static if (Spec.length == 0)
+				alias TagSpecSeq = AliasSeq!(TagSpec!(Type, key, [], [ index ]), Tail);
+			else static if (Spec.length == 1)
+				alias TagSpecSeq = MergeTagSpecs!(
+					TagSpec!(Type, key, Spec[0].setters, [ index ] ~ Spec[0].getters), Tail);
+		}
 	}
 }
 
@@ -187,8 +209,8 @@ unittest {
 	alias specs = TagSpecSeq!stageTags;
 	static assert(specs.length == 2);
 	static assert(is(Id!specs == Id!(
-		TagSpec!(uint, "foo", [ 3, 5 ]),
-		TagSpec!(string, "bar", [ 4 ]))));
+		TagSpec!(uint, "foo", [ 3, 5 ], [ 5, 6 ]),
+		TagSpec!(string, "bar", [ 4 ], [ 6 ]))));
 }
 
 /// Structure that holds values of a single tag for all subranges of a pipeline.
@@ -227,7 +249,7 @@ private struct Tag(alias Spec) {
 }
 
 unittest {
-	Tag!(TagSpec!(string, "sometag", [ 7, 13, 19, 32 ])) tag;
+	Tag!(TagSpec!(string, "sometag", [ 7, 13, 19, 32 ], [])) tag;
 	tag.set!7("foo");
 	tag.set!13("bar");
 	tag.set!19("baz");
@@ -287,7 +309,12 @@ private struct TagTuple(tagSpecs...)
 	alias Tup = Tuple!(staticMap!(specMap, tagSpecs));
 	Tup tags;
 
-	alias ValueType(string key) = TagSpecByKey!(key, tagSpecs)[0].Type;
+	template ValueType(string key) {
+		static if (is(TagSpecByKey!(key, tagSpecs)[0].Type T))
+			alias ValueType = T;
+		else
+			alias ValueType = void;
+	}
 
 	ValueType!k get(string k, size_t i)()
 	{
@@ -303,13 +330,16 @@ private struct TagTuple(tagSpecs...)
 }
 
 unittest {
-	alias specs = AliasSeq!(TagSpec!(uint, "foo.bar", [ 3, 5, 17 ]), TagSpec!(string, "bar.baz", [ 4, 5, 13 ]));
+	alias specs = AliasSeq!(
+		TagSpec!(uint, "foo.bar", [ 3, 5, 17 ], [ 4 ]),
+		TagSpec!(string, "bar.baz", [ 4, 5, 13 ], [ 5, 8 ]));
 	alias T = TagTuple!specs;
 	static assert(is(T.ValueType!"foo.bar" == uint));
 	static assert(is(T.ValueType!"bar.baz" == string));
 	T tup;
 	tup.set!("foo.bar", 3)(42);
 	assert(tup.get!("foo.bar", 4) == 42);
+	tup.set!("bar.baz", 4)("bar");
 }
 
 template hasOp(TagOp op) {
@@ -326,13 +356,78 @@ private:
 	enum bool isGetter(size_t index) = anySatisfy!(test!(index, TagOp.get), TagAttributeTuples);
 	enum bool isSetter(size_t index) = anySatisfy!(test!(index, TagOp.set), TagAttributeTuples);
 
-	alias Tup = TagTuple!(TagSpecSeq!TagAttributeTuples);
+	alias TagSpecs = TagSpecSeq!TagAttributeTuples;
+	alias Tup = TagTuple!TagSpecs;
 	Tup tup;
 
 public:
 	///
 	alias ValueType(string key) = Tup.ValueType!key;
 
+	enum size_t[] getters(string key, size_t index) = TagSpecByKey!(key, TagSpecs)[0].gettersAt!index;
 	void set(string key, size_t index)(ValueType!key value) { tup.set!(key, index)(value); }
 	ValueType!key get(string key, size_t index)() { return tup.get!(key, index); }
+}
+
+version(unittest) {
+private:
+	import flod.traits;
+	@pullSource!ubyte
+	@tagSetter!(string, "foo", int, "bar")
+	struct TestSource(alias Context, A...) {
+		mixin Context!A;
+
+		size_t pull(ubyte[] buf) {
+			tag!"foo" = "source";
+			tag!"bar" = 31337;
+			return 0;
+		}
+	}
+
+	@peekSink!ubyte @pullSource!ubyte
+	@tagGetter!(string, "foo") @tagSetter!(string, "foo")
+	struct TestFilter1(alias Context, A...) {
+		mixin Context!A;
+
+		size_t pull(ubyte[] buf) { return source.peek(buf.length).length; }
+
+		void onChange(string key)()
+		{
+			static if (key == "foo")
+				tag!"foo" = tag!"foo" ~ ".filter1";
+			// TestFilter1 not declared @tagSetter!(int, "bar")
+			static assert(!__traits(compiles, tag!"bar" = 31337));
+		}
+	}
+
+	@pushSink!ubyte
+	@tagGetter!(string, "foo", int, "bar")
+	struct TestSink(alias Context, A...) {
+		mixin Context!A;
+
+		string* _foo;
+		int* _bar;
+
+		this(string* foo, int* bar)
+		{
+			_foo = foo;
+			_bar = bar;
+		}
+
+		size_t push(ubyte[] buf) { return buf.length; }
+
+		void onChange(string key)()
+		{
+			mixin(`*_` ~ key ~ ` = tag!"` ~ key ~ `";`);
+		}
+	}
+}
+
+unittest {
+	import flod.pipeline : pipe;
+	string foo;
+	int bar;
+	pipe!TestSource.pipe!TestFilter1.pipe!TestFilter1.pipe!TestSink(&foo, &bar);
+	assert(foo == "source.filter1.filter1");
+	assert(bar == 31337);
 }
