@@ -207,34 +207,3 @@ unittest {
 	@peekSource!double static struct Foo {}
 	static assert(sourceMethod!Foo == peekSource!double);
 }
-
-mixin template TestScheduler() {
-	static struct __Scheduler {
-		void stop();
-	}
-	__Scheduler _flod_scheduler;
-
-	int yield() { return 1; }
-}
-
-bool check(alias T)()
-{
-	if (__ctfe) {
-		alias SoE = Traits!T.SourceElementType;
-		alias SiE = Traits!T.SinkElementType;
-		static if (isPushSink!T && isPullSource!T) {
-			import flod.pipeline : AllWrapper;
-			AllWrapper!(T!TestScheduler) t;
-			SiE[15] pushbuf;
-			SoE[15] pullbuf;
-			static if (!__traits(compiles, t.push(pushbuf[])))
-				t.push(pushbuf[]);
-			static if (!__traits(compiles, t.pull(pullbuf[])))
-				t.push(pullbuf[]);
-		}
-		else {
-			pragma(msg, "@check not implemented for ", str!(Traits!T), " (", str!T, ")");
-		}
-	}
-	return true;
-}
