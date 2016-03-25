@@ -8,7 +8,7 @@ module flod.range;
 
 import std.range : isInputRange, isOutputRange;
 
-import flod.pipeline : pipe, isPipeline;
+import flod.pipeline : pipe, isSchema;
 import flod.traits;
 
 private template ArraySource(E) {
@@ -76,14 +76,13 @@ package auto pipeFromInputRange(R)(R r)
 
 unittest {
 	import std.range : iota, hasSlicing, hasLength, isInfinite;
-	import flod.pipeline : isPullPipeline;
 
 	auto r = iota(6, 12);
 	static assert( hasSlicing!(typeof(r)));
 	static assert( hasLength!(typeof(r)));
 	static assert(!isInfinite!(typeof(r)));
 	auto p = r.pipeFromInputRange;
-	static assert(isPullPipeline!(typeof(p)));
+	static assert(isSchema!(typeof(p)));
 	static assert(is(p.ElementType == int));
 	auto pl = p.create();
 	int[4] buf;
@@ -136,11 +135,11 @@ private template RangeSink(R, E) {
 	}
 }
 
-public auto copy(Pipeline, R)(auto ref Pipeline pipeline, R outputRange)
-	if (isPipeline!Pipeline && isOutputRange!(R, Pipeline.ElementType))
+public auto copy(S, R)(auto ref S schema, R outputRange)
+	if (isSchema!S && isOutputRange!(R, S.ElementType))
 {
-	alias E = Pipeline.ElementType;
-	return pipeline.pipe!(RangeSink!(R, E))(outputRange);
+	alias E = S.ElementType;
+	return schema.pipe!(RangeSink!(R, E))(outputRange);
 }
 
 unittest {

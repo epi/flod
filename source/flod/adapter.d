@@ -39,15 +39,15 @@ private template DefaultPullPeekAdapter(Buffer, E) {
 }
 
 ///
-auto pullPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
-	if (isPullPipeline!Pipeline)
+auto pullPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPullPeekAdapter!(Buffer, Pipeline.ElementType))(buffer);
+	return schema.pipe!(DefaultPullPeekAdapter!(Buffer, S.ElementType))(buffer);
 }
 
 ///
-auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
-	if (isPullPipeline!Pipeline)
+auto pullPeek(S)(auto ref S pipeline)
+	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
 	return pipeline.pullPeek(movingBuffer());
@@ -71,10 +71,10 @@ private template DefaultPeekPullAdapter(E) {
 }
 
 ///
-auto peekPull(Pipeline)(auto ref Pipeline pipeline)
-	if (isPeekPipeline!Pipeline)
+auto peekPull(S)(auto ref S schema)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPeekPullAdapter!(Pipeline.ElementType));
+	return schema.pipe!(DefaultPeekPullAdapter!(S.ElementType));
 }
 
 private template DefaultPullPushAdapter(E) {
@@ -104,10 +104,10 @@ private template DefaultPullPushAdapter(E) {
 }
 
 ///
-auto pullPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
-	if (isPullPipeline!Pipeline)
+auto pullPush(S)(auto ref S schema, size_t chunkSize = 4096)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPullPushAdapter!(Pipeline.ElementType))(chunkSize);
+	return schema.pipe!(DefaultPullPushAdapter!(S.ElementType))(chunkSize);
 }
 
 private template DefaultPullAllocAdapter(E) {
@@ -140,10 +140,10 @@ private template DefaultPullAllocAdapter(E) {
 }
 
 ///
-auto pullAlloc(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
-	if (isPullPipeline!Pipeline)
+auto pullAlloc(S)(auto ref S schema, size_t chunkSize = 4096)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPullAllocAdapter!(Pipeline.ElementType))(chunkSize);
+	return schema.pipe!(DefaultPullAllocAdapter!(S.ElementType))(chunkSize);
 }
 
 private template DefaultPeekPushAdapter(E) {
@@ -174,10 +174,10 @@ private template DefaultPeekPushAdapter(E) {
 }
 
 ///
-auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t.sizeof)
-	if (isPeekPipeline!Pipeline)
+auto peekPush(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPeekPushAdapter!(Pipeline.ElementType))(minSliceSize);
+	return schema.pipe!(DefaultPeekPushAdapter!(S.ElementType))(minSliceSize);
 }
 
 private template DefaultPeekAllocAdapter(E) {
@@ -216,10 +216,10 @@ private template DefaultPeekAllocAdapter(E) {
 }
 
 ///
-auto peekAlloc(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
-	if (isPeekPipeline!Pipeline)
+auto peekAlloc(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
+	if (isSchema!S)
 {
-	return pipeline.pipe!(DefaultPeekAllocAdapter!(Pipeline.ElementType))(minSliceSize, maxSliceSize);
+	return schema.pipe!(DefaultPeekAllocAdapter!(S.ElementType))(minSliceSize, maxSliceSize);
 }
 
 private template DefaultPushAllocAdapter(E) {
@@ -241,12 +241,12 @@ private template DefaultPushAllocAdapter(E) {
 }
 
 ///
-auto pushAlloc(Pipeline)(auto ref Pipeline pipeline)
-	if (isPushPipeline!Pipeline)
+auto pushAlloc(S)(auto ref S schema)
+	if (isSchema!S)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultPushAllocAdapter!(E);
-	return pipeline.pipe!PP();
+	return schema.pipe!PP();
 }
 
 private template DefaultPushPullAdapter(Buffer, E) {
@@ -322,18 +322,18 @@ private template DefaultPushPullAdapter(Buffer, E) {
 }
 
 ///
-auto pushPull(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+auto pushPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultPushPullAdapter!(Buffer, E);
-	return pipeline.pipe!PP(buffer);
+	return schema.pipe!PP(buffer);
 }
 
 ///
-auto pushPull(Pipeline)(auto ref Pipeline pipeline)
+auto pushPull(S)(auto ref S schema)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.pushPull(movingBuffer());
+	return schema.pushPull(movingBuffer());
 }
 
 private template ImplementPeekConsume(E) {
@@ -407,18 +407,18 @@ private template DefaultPushPeekAdapter(Buffer, E) {
 
 
 ///
-auto pushPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
+auto pushPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultPushPeekAdapter!(Buffer, E);
-	return pipeline.pipe!PP(buffer);
+	return schema.pipe!PP(buffer);
 }
 
 ///
-auto pushPeek(Pipeline)(auto ref Pipeline pipeline)
+auto pushPeek(S)(auto ref S schema)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.pushPeek(movingBuffer());
+	return schema.pushPeek(movingBuffer());
 }
 
 private template DefaultAllocPeekAdapter(Buffer, E) {
@@ -439,20 +439,20 @@ private template DefaultAllocPeekAdapter(Buffer, E) {
 }
 
 ///
-auto allocPeek(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
-	if (isAllocPipeline!Pipeline)
+auto allocPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+	if (isSchema!S)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultAllocPeekAdapter!(Buffer, E);
-	return pipeline.pipe!PP(buffer);
+	return schema.pipe!PP(buffer);
 }
 
 ///
-auto allocPeek(Pipeline)(auto ref Pipeline pipeline)
-	if (isAllocPipeline!Pipeline)
+auto allocPeek(S)(auto ref S schema)
+	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.allocPeek(movingBuffer());
+	return schema.allocPeek(movingBuffer());
 }
 
 private template DefaultAllocPullAdapter(Buffer, E) {
@@ -488,20 +488,20 @@ private template DefaultAllocPullAdapter(Buffer, E) {
 }
 
 ///
-auto allocPull(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
-	if (isAllocPipeline!Pipeline)
+auto allocPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+	if (isSchema!S)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultAllocPullAdapter!(Buffer, E);
-	return pipeline.pipe!PP(buffer);
+	return schema.pipe!PP(buffer);
 }
 
 ///
-auto allocPull(Pipeline)(auto ref Pipeline pipeline)
-	if (isAllocPipeline!Pipeline)
+auto allocPull(S)(auto ref S schema)
+	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.allocPull(movingBuffer());
+	return schema.allocPull(movingBuffer());
 }
 
 private template DefaultAllocPushAdapter(Buffer, E) {
@@ -534,18 +534,18 @@ private template DefaultAllocPushAdapter(Buffer, E) {
 }
 
 ///
-auto allocPush(Pipeline, Buffer)(auto ref Pipeline pipeline, auto ref Buffer buffer)
-	if (isAllocPipeline!Pipeline)
+auto allocPush(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+	if (isSchema!S)
 {
-	alias E = Pipeline.ElementType;
+	alias E = S.ElementType;
 	alias PP = DefaultAllocPushAdapter!(Buffer, E);
-	return pipeline.pipe!PP(buffer);
+	return schema.pipe!PP(buffer);
 }
 
 ///
-auto allocPush(Pipeline)(auto ref Pipeline pipeline)
-	if (isAllocPipeline!Pipeline)
+auto allocPush(S)(auto ref S schema)
+	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.allocPush(movingBuffer());
+	return schema.allocPush(movingBuffer());
 }

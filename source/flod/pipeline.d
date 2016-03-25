@@ -670,7 +670,7 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
+private mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
 	import flod.pipeline : isPassiveSink, isPassiveSource;
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
@@ -727,43 +727,58 @@ private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 	}
 }
 
-private struct NullPipeline {
+/**
+A placeholder for the initial stage's source schema.
+*/
+private struct NullSchema {
 	enum size_t length = 0;
 	enum size_t driverIndex = -1;
 	enum str = "";
 	enum treeStr(int indent) = "";
 	alias StageSeq = AliasSeq!();
-	alias InstSeq = AliasSeq!();
 	enum size_t[] drivers = [];
 }
 
-private struct Pipeline(alias S, SoP, A...) {
+/**
+Holds the information (both static and dynamic) needed to create a pipeline instance.
+
+The static information includes the template aliases of all stages in the pipeline, as well as
+types of their constructor arguments.
+The dynamic information is the constructor arguments themselves.
+
+Params:
+	S   = The stage added as the last one to the schema.
+    Src = Type of schema object describing the previous stages.
+    A   = Types of arguments passed to S's instance ctor.
+*/
+private struct Schema(alias S, Src, A...) {
 	import std.conv : to;
-	alias Stage = S;
+	alias LastStage = S;
 	alias Args = A;
-	alias SourcePipeline = SoP;
-
-	alias StageSeq = AliasSeq!(SourcePipeline.StageSeq, Stage);
+	alias Source = Src;
+	/// all stages as an AliasSeq.
+	alias StageSeq = AliasSeq!(Source.StageSeq, LastStage);
 	alias FirstStage = StageSeq[0];
-	alias LastStage = StageSeq[$ - 1];
 
-	enum bool isDriver = (isActiveSource!Stage && !isPassiveSink!Stage)
-		|| (isActiveSink!Stage && !isPassiveSource!Stage);
-	enum size_t driverIndex = isDriver ? index : SourcePipeline.driverIndex;
-	enum size_t index = SourcePipeline.length;
-	enum size_t length  = SourcePipeline.length + 1;
-	enum drivers = SourcePipeline.drivers ~ driverIndex;
+	private enum bool isDriver =
+		   (isActiveSource!LastStage && !isPassiveSink!LastStage)
+		|| (isActiveSink!LastStage && !isPassiveSource!LastStage);
+	enum size_t driverIndex = isDriver ? index : Source.driverIndex;
+	enum size_t index = Source.length;
+	enum size_t length  = Source.length + 1;
+	enum drivers = Source.drivers ~ driverIndex;
 
-	enum hasSource = !is(SourcePipeline == NullPipeline);
+	enum hasSource = !is(Source == NullSchema);
 
 	static if (is(Traits!LastStage.SourceElementType W))
 		alias ElementType = W;
 
-	enum str = (hasSource ? SourcePipeline.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!Stage;
+	enum str = (hasSource ? Source.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!LastStage;
 
-	SourcePipeline sourcePipeline;
+	Source source;
 	Args args;
 
+	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
 		alias SourceE = Traits!LastStage.SourceElementType;
@@ -828,10 +843,10 @@ private struct Pipeline(alias S, SoP, A...) {
 	void construct(T)(ref T t)
 	{
 		static if (hasSource) {
-			sourcePipeline.construct(t);
+			source.construct(t);
 		}
 		constructInPlace(t.tup[index], args);
-		static if (isPassiveSink!Stage && isPassiveSource!Stage)
+		static if (isPassiveSink!LastStage && isPassiveSource!LastStage)
 			t.tup[index].spawn();
 	}
 
@@ -858,27 +873,23 @@ private struct Pipeline(alias S, SoP, A...) {
 	}
 }
 
-private auto pipeline(alias Stage, SoP, A...)(auto ref SoP sourcePipeline, auto ref A args)
+private auto pipeline(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
 {
-	return Pipeline!(Stage, SoP, A)(sourcePipeline, args);
+	return Schema!(Stage, Source, Args)(sourceSchema, args);
 }
 
-private template testPipeline(P, alias test) {
-	static if (is(P == Pipeline!A, A...))
-		enum testPipeline = test!(P.LastStage);
+private template testSchema(Sch, alias test) {
+	static if (is(Sch == Schema!A, A...))
+		enum testSchema = test!(Sch.LastStage);
 	else
-		enum testPipeline = false;
+		enum testSchema = false;
 }
 
-enum isPeekPipeline(P) = isDynamicArray!P || testPipeline!(P, isPeekSource);
-
-enum isPullPipeline(P) = isInputRange!P || testPipeline!(P, isPullSource);
-
-enum isPushPipeline(P) = testPipeline!(P, isPushSource);
-
-enum isAllocPipeline(P) = testPipeline!(P, isAllocSource);
-
-enum isPipeline(P) = isPushPipeline!P || isPullPipeline!P || isPeekPipeline!P || isAllocPipeline!P;
+enum isSchema(P) =
+	   isDynamicArray!P || testSchema!(P, isPeekSource)
+	|| isInputRange!P || testSchema!(P, isPullSource)
+	|| testSchema!(P, isPushSource)
+	|| testSchema!(P, isAllocSource);
 
 ///
 auto pipe(alias Stage, Args...)(auto ref Args args)
@@ -889,23 +900,23 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else
-		return pipeline!Stage(NullPipeline(), args);
+		return pipeline!Stage(NullSchema(), args);
 }
 
 unittest {
 	auto p1 = pipe!TestPeekSource(Arg!TestPeekSource());
-	static assert(isPeekPipeline!(typeof(p1)));
+	static assert(isSchema!(typeof(p1)));
 	static assert(is(p1.ElementType == ulong));
 	auto p2 = pipe!TestPullSource(Arg!TestPullSource());
-	static assert(isPullPipeline!(typeof(p2)));
+	static assert(isSchema!(typeof(p2)));
 	static assert(is(p2.ElementType == ulong));
 }
 
 unittest {
 	auto p1 = pipe!TestPushSource(Arg!TestPushSource());
-	static assert(isPushPipeline!(typeof(p1)));
+	static assert(isSchema!(typeof(p1)));
 	auto p2 = pipe!TestAllocSource(Arg!TestAllocSource());
-	static assert(isAllocPipeline!(typeof(p2)));
+	static assert(isSchema!(typeof(p2)));
 }
 
 unittest {
@@ -1095,7 +1106,7 @@ unittest {
 
 unittest {
 	auto array = [ 1UL, 0xdead, 6 ];
-	assert(isPeekPipeline!(typeof(array)));
+	assert(isSchema!(typeof(array)));
 	outputArray.length = 4;
 	outputIndex = 0;
 	array.pipe!TestPeekSink(Arg!TestPeekSink());
@@ -1106,7 +1117,7 @@ unittest {
 	import std.range : iota, array, take;
 	import std.algorithm : equal;
 	auto r = iota(37UL, 1337);
-	static assert(isPullPipeline!(typeof(r)));
+	static assert(isSchema!(typeof(r)));
 	outputArray.length = 5000;
 	outputIndex = 0;
 	r.pipe!TestPullSink(Arg!TestPullSink());
