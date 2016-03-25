@@ -15,6 +15,272 @@ import flod.metadata;
 import flod.range;
 import flod.traits;
 
+struct SinkDrivenFiberScheduler {
+	import core.thread : Fiber;
+	Fiber fiber;
+	mixin NonCopyable;
+
+	void stop()
+	{
+		auto f = this.fiber;
+		if (f) {
+			if (f.state == Fiber.State.HOLD) {
+				this.fiber = null;
+				f.call();
+			}
+			auto x = f.state;
+			assert(f.state == Fiber.State.TERM);
+		}
+	}
+
+	int yield()
+	{
+		if (fiber is null)
+			return 2;
+		if (fiber.state == Fiber.State.EXEC) {
+			Fiber.yield();
+			return fiber is null;
+		} else {
+			if (fiber.state == Fiber.State.HOLD)
+				fiber.call();
+			return fiber.state != Fiber.State.HOLD;
+		}
+	}
+}
+
+private mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
+	import flod.pipeline : isPassiveSink, isPassiveSource;
+	@property ref PL outer()() { return PL.outer!index(this); }
+	@property ref auto source()() { return outer.tup[index - 1]; }
+	@property ref auto sink()() { return outer.tup[index + 1]; }
+	@property ref auto sourceDriver()() { return outer.tup[driverIndex]; }
+	static if (isPassiveSink!Stage && isPassiveSource!Stage) {
+		SinkDrivenFiberScheduler _flod_scheduler;
+
+		int yield()() { return _flod_scheduler.yield(); }
+		void spawn()()
+		{
+			import core.thread : Fiber;
+			if (!_flod_scheduler.fiber) {
+				static if (__traits(compiles, &sourceDriver.run!()))
+					auto runf = &sourceDriver.run!();
+				else
+					auto runf = &sourceDriver.run;
+				_flod_scheduler.fiber = new Fiber(runf, 65536);
+			}
+		}
+		void stop()() { _flod_scheduler.stop(); }
+	}
+
+	@property void tag(string key)(PL.Metadata.ValueType!key value)
+	{
+		import flod.meta : tupleFromArray;
+		outer.metadata.set!(key, index)(value);
+
+		foreach (i; tupleFromArray!(size_t, PL.Metadata.getters!(key, index))) {
+			static if (__traits(hasMember, typeof(outer.tup[i]), "onChange"))
+				outer.tup[i].onChange!key();
+			else
+				pragma(msg, "Warning: no property `onChange` for stage " ~ .str!(typeof(outer.tup[i])));
+		}
+	}
+
+	@property PL.Metadata.ValueType!key tag(string key)()
+	{
+		return outer.metadata.get!(key, index);
+	}
+}
+
+private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
+{
+	debug(FlodTraceLifetime) {
+		import std.experimental.logger : tracef;
+		tracef("Construct at %x..%x %s with %s", &t, &t + 1, .str!T, Args.stringof);
+	}
+	static if (__traits(hasMember, t, "__ctor")) {
+		t.__ctor(args);
+	} else static if (Args.length > 0) {
+		static assert(0, "Stage " ~ str!T ~ " does not have a non-trivial constructor" ~
+			" but construction was requested with arguments " ~ Args.stringof);
+	}
+}
+
+/**
+A placeholder for the initial stage's source schema.
+*/
+private struct NullSchema {
+	enum size_t length = 0;
+	enum size_t driverIndex = -1;
+	enum str = "";
+	enum treeStr(int indent) = "";
+	alias StageSeq = AliasSeq!();
+	enum size_t[] drivers = [];
+}
+
+/**
+Holds the information (both static and dynamic) needed to create a pipeline instance.
+
+The static information includes the template aliases of all stages in the pipeline, as well as
+types of their constructor arguments.
+The dynamic information is the constructor arguments themselves.
+
+Params:
+	S   = The stage added as the last one to the schema.
+    Src = Type of schema object describing the previous stages.
+    A   = Types of arguments passed to S's instance ctor.
+*/
+private struct Schema(alias S, Src, A...) {
+	import std.conv : to;
+	alias LastStage = S;
+	alias Args = A;
+	alias Source = Src;
+	/// all stages as an AliasSeq.
+	alias StageSeq = AliasSeq!(Source.StageSeq, LastStage);
+	alias FirstStage = StageSeq[0];
+
+	private enum bool isDriver =
+		   (isActiveSource!LastStage && !isPassiveSink!LastStage)
+		|| (isActiveSink!LastStage && !isPassiveSource!LastStage);
+	enum size_t driverIndex = isDriver ? index : Source.driverIndex;
+	enum size_t index = Source.length;
+	enum size_t length  = Source.length + 1;
+	enum drivers = Source.drivers ~ driverIndex;
+
+	enum hasSource = !is(Source == NullSchema);
+
+	static if (is(Traits!LastStage.SourceElementType W))
+		alias ElementType = W;
+
+	enum str = (hasSource ? Source.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!LastStage;
+
+	Source source;
+	Args args;
+
+	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
+	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
+	{
+		alias SourceE = Traits!LastStage.SourceElementType;
+		alias SinkE = Traits!NextStage.SinkElementType;
+		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
+			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
+			.str!NextStage ~ " expects " ~ SinkE.stringof);
+
+		static if (areCompatible!(LastStage, NextStage)) {
+			auto result = pipeline!NextStage(this, nextArgs);
+			static if (isSource!NextStage || isSink!FirstStage)
+				return result;
+			else
+				result.run();
+		} else {
+			import std.string : capitalize;
+			import flod.adapter;
+			enum adapterName = Traits!LastStage.sourceMethodStr ~ Traits!NextStage.sinkMethodStr.capitalize();
+			mixin(`return this.` ~ adapterName ~ `.pipe!NextStage(nextArgs);`);
+		}
+	}
+
+	static struct Type(MT) {
+		alias Metadata = MT;
+
+		template IthType(size_t i) {
+			alias StageType = StageSeq[i];
+			alias IthType = StageType!(Context, Type, StageType, i, drivers[i]);
+		}
+
+		template StageTypeTuple(T, size_t i, Stages...) {
+			static if (i >= Stages.length)
+				alias Tuple = AliasSeq!();
+			else {
+				alias Tuple = AliasSeq!(IthType!i, StageTypeTuple!(T, i + 1, Stages).Tuple);
+			}
+		}
+
+		alias Tup = StageTypeTuple!(Type, 0, StageSeq).Tuple;
+		Tup tup;
+		Metadata metadata;
+
+		static ref Type outer(size_t thisIndex)(ref IthType!thisIndex thisref)
+		{
+			return *(cast(Type*) (cast(void*) &thisref - Type.init.tup[thisIndex].offsetof));
+		}
+
+		static if (isPeekSource!LastStage) {
+			const(ElementType)[] peek()(size_t n) { return tup[index].peek(n); }
+			void consume()(size_t n) { tup[index].consume(n); }
+		} else static if (isPullSource!LastStage) {
+			size_t pull()(ElementType[] buf) { return tup[index].pull(buf); }
+		} else {
+			// TODO: sink pipelines.
+			void run()()
+			{
+				tup[driverIndex].run();
+			}
+		}
+	}
+
+	void construct(T)(ref T t)
+	{
+		static if (hasSource) {
+			source.construct(t);
+		}
+		constructInPlace(t.tup[index], args);
+		static if (isPassiveSink!LastStage && isPassiveSource!LastStage)
+			t.tup[index].spawn();
+	}
+
+	static if (!isSink!FirstStage && !isSource!LastStage) {
+		void run()()
+		{
+			alias PS = FilterTagAttributes!(0, StageSeq);
+			alias MT = Metadata!PS;
+			Type!MT t;
+			this.construct(t);
+			t.run();
+		}
+	}
+
+	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
+		auto create()()
+		{
+			alias PS = FilterTagAttributes!(0, StageSeq);
+			alias MT = Metadata!PS;
+			Type!MT t;
+			construct(t);
+			return t;
+		}
+	}
+}
+
+private auto pipeline(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
+{
+	return Schema!(Stage, Source, Args)(sourceSchema, args);
+}
+
+private template testSchema(Sch, alias test) {
+	static if (is(Sch == Schema!A, A...))
+		enum testSchema = test!(Sch.LastStage);
+	else
+		enum testSchema = false;
+}
+
+enum isSchema(P) =
+	   isDynamicArray!P || testSchema!(P, isPeekSource)
+	|| isInputRange!P || testSchema!(P, isPullSource)
+	|| testSchema!(P, isPushSource)
+	|| testSchema!(P, isAllocSource);
+
+///
+auto pipe(alias Stage, Args...)(auto ref Args args)
+	if (isSink!Stage || isSource!Stage)
+{
+	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
+		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
+	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
+		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
+	else
+		return pipeline!Stage(NullSchema(), args);
+}
+
 version(unittest) {
 	import std.algorithm : min, max, map, copy;
 	import std.conv : to;
@@ -635,272 +901,6 @@ version(unittest) {
 		testChain!filterlist(iota(0, 173447));
 	}
 
-}
-
-struct SinkDrivenFiberScheduler {
-	import core.thread : Fiber;
-	Fiber fiber;
-	mixin NonCopyable;
-
-	void stop()
-	{
-		auto f = this.fiber;
-		if (f) {
-			if (f.state == Fiber.State.HOLD) {
-				this.fiber = null;
-				f.call();
-			}
-			auto x = f.state;
-			assert(f.state == Fiber.State.TERM);
-		}
-	}
-
-	int yield()
-	{
-		if (fiber is null)
-			return 2;
-		if (fiber.state == Fiber.State.EXEC) {
-			Fiber.yield();
-			return fiber is null;
-		} else {
-			if (fiber.state == Fiber.State.HOLD)
-				fiber.call();
-			return fiber.state != Fiber.State.HOLD;
-		}
-	}
-}
-
-private mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
-	import flod.pipeline : isPassiveSink, isPassiveSource;
-	@property ref PL outer()() { return PL.outer!index(this); }
-	@property ref auto source()() { return outer.tup[index - 1]; }
-	@property ref auto sink()() { return outer.tup[index + 1]; }
-	@property ref auto sourceDriver()() { return outer.tup[driverIndex]; }
-	static if (isPassiveSink!Stage && isPassiveSource!Stage) {
-		SinkDrivenFiberScheduler _flod_scheduler;
-
-		int yield()() { return _flod_scheduler.yield(); }
-		void spawn()()
-		{
-			import core.thread : Fiber;
-			if (!_flod_scheduler.fiber) {
-				static if (__traits(compiles, &sourceDriver.run!()))
-					auto runf = &sourceDriver.run!();
-				else
-					auto runf = &sourceDriver.run;
-				_flod_scheduler.fiber = new Fiber(runf, 65536);
-			}
-		}
-		void stop()() { _flod_scheduler.stop(); }
-	}
-
-	@property void tag(string key)(PL.Metadata.ValueType!key value)
-	{
-		import flod.meta : tupleFromArray;
-		outer.metadata.set!(key, index)(value);
-
-		foreach (i; tupleFromArray!(size_t, PL.Metadata.getters!(key, index))) {
-			static if (__traits(hasMember, typeof(outer.tup[i]), "onChange"))
-				outer.tup[i].onChange!key();
-			else
-				pragma(msg, "Warning: no property `onChange` for stage " ~ .str!(typeof(outer.tup[i])));
-		}
-	}
-
-	@property PL.Metadata.ValueType!key tag(string key)()
-	{
-		return outer.metadata.get!(key, index);
-	}
-}
-
-private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
-{
-	debug(FlodTraceLifetime) {
-		import std.experimental.logger : tracef;
-		tracef("Construct at %x..%x %s with %s", &t, &t + 1, .str!T, Args.stringof);
-	}
-	static if (__traits(hasMember, t, "__ctor")) {
-		t.__ctor(args);
-	} else static if (Args.length > 0) {
-		static assert(0, "Stage " ~ str!T ~ " does not have a non-trivial constructor" ~
-			" but construction was requested with arguments " ~ Args.stringof);
-	}
-}
-
-/**
-A placeholder for the initial stage's source schema.
-*/
-private struct NullSchema {
-	enum size_t length = 0;
-	enum size_t driverIndex = -1;
-	enum str = "";
-	enum treeStr(int indent) = "";
-	alias StageSeq = AliasSeq!();
-	enum size_t[] drivers = [];
-}
-
-/**
-Holds the information (both static and dynamic) needed to create a pipeline instance.
-
-The static information includes the template aliases of all stages in the pipeline, as well as
-types of their constructor arguments.
-The dynamic information is the constructor arguments themselves.
-
-Params:
-	S   = The stage added as the last one to the schema.
-    Src = Type of schema object describing the previous stages.
-    A   = Types of arguments passed to S's instance ctor.
-*/
-private struct Schema(alias S, Src, A...) {
-	import std.conv : to;
-	alias LastStage = S;
-	alias Args = A;
-	alias Source = Src;
-	/// all stages as an AliasSeq.
-	alias StageSeq = AliasSeq!(Source.StageSeq, LastStage);
-	alias FirstStage = StageSeq[0];
-
-	private enum bool isDriver =
-		   (isActiveSource!LastStage && !isPassiveSink!LastStage)
-		|| (isActiveSink!LastStage && !isPassiveSource!LastStage);
-	enum size_t driverIndex = isDriver ? index : Source.driverIndex;
-	enum size_t index = Source.length;
-	enum size_t length  = Source.length + 1;
-	enum drivers = Source.drivers ~ driverIndex;
-
-	enum hasSource = !is(Source == NullSchema);
-
-	static if (is(Traits!LastStage.SourceElementType W))
-		alias ElementType = W;
-
-	enum str = (hasSource ? Source.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!LastStage;
-
-	Source source;
-	Args args;
-
-	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
-	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
-	{
-		alias SourceE = Traits!LastStage.SourceElementType;
-		alias SinkE = Traits!NextStage.SinkElementType;
-		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
-			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
-			.str!NextStage ~ " expects " ~ SinkE.stringof);
-
-		static if (areCompatible!(LastStage, NextStage)) {
-			auto result = pipeline!NextStage(this, nextArgs);
-			static if (isSource!NextStage || isSink!FirstStage)
-				return result;
-			else
-				result.run();
-		} else {
-			import std.string : capitalize;
-			import flod.adapter;
-			enum adapterName = Traits!LastStage.sourceMethodStr ~ Traits!NextStage.sinkMethodStr.capitalize();
-			mixin(`return this.` ~ adapterName ~ `.pipe!NextStage(nextArgs);`);
-		}
-	}
-
-	static struct Type(MT) {
-		alias Metadata = MT;
-
-		template IthType(size_t i) {
-			alias StageType = StageSeq[i];
-			alias IthType = StageType!(Context, Type, StageType, i, drivers[i]);
-		}
-
-		template StageTypeTuple(T, size_t i, Stages...) {
-			static if (i >= Stages.length)
-				alias Tuple = AliasSeq!();
-			else {
-				alias Tuple = AliasSeq!(IthType!i, StageTypeTuple!(T, i + 1, Stages).Tuple);
-			}
-		}
-
-		alias Tup = StageTypeTuple!(Type, 0, StageSeq).Tuple;
-		Tup tup;
-		Metadata metadata;
-
-		static ref Type outer(size_t thisIndex)(ref IthType!thisIndex thisref)
-		{
-			return *(cast(Type*) (cast(void*) &thisref - Type.init.tup[thisIndex].offsetof));
-		}
-
-		static if (isPeekSource!LastStage) {
-			const(ElementType)[] peek()(size_t n) { return tup[index].peek(n); }
-			void consume()(size_t n) { tup[index].consume(n); }
-		} else static if (isPullSource!LastStage) {
-			size_t pull()(ElementType[] buf) { return tup[index].pull(buf); }
-		} else {
-			// TODO: sink pipelines.
-			void run()()
-			{
-				tup[driverIndex].run();
-			}
-		}
-	}
-
-	void construct(T)(ref T t)
-	{
-		static if (hasSource) {
-			source.construct(t);
-		}
-		constructInPlace(t.tup[index], args);
-		static if (isPassiveSink!LastStage && isPassiveSource!LastStage)
-			t.tup[index].spawn();
-	}
-
-	static if (!isSink!FirstStage && !isSource!LastStage) {
-		void run()()
-		{
-			alias PS = FilterTagAttributes!(0, StageSeq);
-			alias MT = Metadata!PS;
-			Type!MT t;
-			this.construct(t);
-			t.run();
-		}
-	}
-
-	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
-		auto create()()
-		{
-			alias PS = FilterTagAttributes!(0, StageSeq);
-			alias MT = Metadata!PS;
-			Type!MT t;
-			construct(t);
-			return t;
-		}
-	}
-}
-
-private auto pipeline(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
-{
-	return Schema!(Stage, Source, Args)(sourceSchema, args);
-}
-
-private template testSchema(Sch, alias test) {
-	static if (is(Sch == Schema!A, A...))
-		enum testSchema = test!(Sch.LastStage);
-	else
-		enum testSchema = false;
-}
-
-enum isSchema(P) =
-	   isDynamicArray!P || testSchema!(P, isPeekSource)
-	|| isInputRange!P || testSchema!(P, isPullSource)
-	|| testSchema!(P, isPushSource)
-	|| testSchema!(P, isAllocSource);
-
-///
-auto pipe(alias Stage, Args...)(auto ref Args args)
-	if (isSink!Stage || isSource!Stage)
-{
-	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
-		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
-	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
-		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
-	else
-		return pipeline!Stage(NullSchema(), args);
 }
 
 unittest {
