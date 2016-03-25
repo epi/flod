@@ -59,14 +59,6 @@ template str(W...) {
 }
 
 ///
-template repeat(int id, string s) {
-	static if (id == 0)
-		enum repeat = "";
-	else
-		enum repeat = s ~ repeat!(id - 1, s);
-}
-
-///
 template ReplaceWithMask(ulong mask, ReplacementForZeros, Types...) {
 	alias What = ReplacementForZeros;
 	import std.meta : AliasSeq;
@@ -119,4 +111,12 @@ auto moveIfNonCopyable(T, string file = __FILE__, int line = __LINE__)(auto ref 
 			file ~ "(" ~ to!string(line) ~ "): moving " ~ str!T ~ " (size=" ~ to!string(t.sizeof) ~ ")");
 		return move(t);
 	}
+}
+
+template tupleFromArray(T, T[] arr) {
+	import std.meta : AliasSeq;
+	static if (arr.length)
+		alias tupleFromArray = AliasSeq!(arr[0], tupleFromArray!(T, arr[1 .. $]));
+	else
+		alias tupleFromArray = AliasSeq!();
 }

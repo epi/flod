@@ -11,10 +11,10 @@ import std.range : isInputRange, isOutputRange;
 import flod.pipeline : pipe, isPipeline;
 import flod.traits;
 
-package auto pipeFromArray(E)(const(E)[] array)
-{
+private template ArraySource(E) {
 	@peekSource!E
-	static struct ArraySource {
+	struct ArraySource(alias Context, A...) {
+		mixin Context!A;
 		const(E)[] array;
 		this(const(E)* ptr, size_t length)
 		{
@@ -24,9 +24,13 @@ package auto pipeFromArray(E)(const(E)[] array)
 		const(E)[] peek()(size_t n) { return array; }
 		void consume()(size_t n) { array = array[n .. $]; }
 	}
-	import std.stdio;
+}
 
-	return .pipe!ArraySource(array.ptr, array.length);
+package auto pipeFromArray(E)(const(E)[] array)
+{
+	static assert(isPeekSource!(ArraySource!E));
+	static assert(isSource!(ArraySource!E));
+	return .pipe!(ArraySource!E)(array.ptr, array.length);
 }
 
 unittest {
@@ -40,15 +44,13 @@ unittest {
 	assert(pl.peek(1).length == 0);
 }
 
-package auto pipeFromInputRange(R)(R r)
-	if (isInputRange!R)
-{
+private template RangeSource(R) {
 	import std.range : ElementType;
-
 	alias E = ElementType!R;
+
 	@pullSource!E
-	static struct RangeSource
-	{
+	struct RangeSource(alias Context, A...) {
+		mixin Context!A;
 		R range;
 
 		this(bool dummy, R range) { cast(void) dummy; this.range = range; }
@@ -64,8 +66,12 @@ package auto pipeFromInputRange(R)(R r)
 			return buf.length;
 		}
 	}
+}
 
-	return .pipe!RangeSource(false, r);
+package auto pipeFromInputRange(R)(R r)
+	if (isInputRange!R)
+{
+	return .pipe!(RangeSource!R)(false, r);
 }
 
 unittest {
@@ -113,27 +119,28 @@ unittest {
 	assert(pl.pull(new int[1234567]) == 99);
 }
 
-public auto copy(Pipeline, R)(auto ref Pipeline pipeline, R outputRange)
-	if (isPipeline!Pipeline && isOutputRange!(R, Pipeline.ElementType))
-{
-	import std.range : put;
-
-	alias E = Pipeline.ElementType;
-
+private template RangeSink(R, E) {
 	@pushSink!E
-	static struct Copy {
+	static struct RangeSink(alias Context, A...) {
+		mixin Context!A;
 		R range;
 
 		this()(R range) { this.range = range; }
 
 		size_t push()(const(E)[] buf)
 		{
+			import std.range : put;
 			put(range, buf);
 			return buf.length;
 		}
 	}
+}
 
-	return pipeline.pipe!Copy(outputRange);
+public auto copy(Pipeline, R)(auto ref Pipeline pipeline, R outputRange)
+	if (isPipeline!Pipeline && isOutputRange!(R, Pipeline.ElementType))
+{
+	alias E = Pipeline.ElementType;
+	return pipeline.pipe!(RangeSink!(R, E))(outputRange);
 }
 
 unittest {

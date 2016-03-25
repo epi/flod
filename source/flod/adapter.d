@@ -11,8 +11,8 @@ import flod.traits;
 
 private template DefaultPullPeekAdapter(Buffer, E) {
 	@pullSink!E @peekSource!E
-	struct DefaultPullPeekAdapter(Source) {
-		Source source;
+	struct DefaultPullPeekAdapter(alias Context, A...) {
+		mixin Context!A;
 		Buffer buffer;
 
 		this()(auto ref Buffer buffer)
@@ -55,8 +55,8 @@ auto pullPeek(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultPeekPullAdapter(E) {
 	@peekSink!E @pullSource!E
-	struct DefaultPeekPullAdapter(Source) {
-		Source source;
+	struct DefaultPeekPullAdapter(alias Context, A...) {
+		mixin Context!A;
 
 		size_t pull(E[] buf)
 		{
@@ -79,9 +79,8 @@ auto peekPull(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultPullPushAdapter(E) {
 	@pullSink!E @pushSource!E
-	struct DefaultPullPushAdapter(Source, Sink) {
-		Source source;
-		Sink sink;
+	struct DefaultPullPushAdapter(alias Context, A...) {
+		mixin Context!A;
 		size_t chunkSize;
 
 		this(size_t chunkSize)
@@ -113,9 +112,8 @@ auto pullPush(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
 
 private template DefaultPullAllocAdapter(E) {
 	@pullSink!E @allocSource!E
-	struct DefaultPullAllocAdapter(Source, Sink) {
-		Source source;
-		Sink sink;
+	struct DefaultPullAllocAdapter(alias Context, A...) {
+		mixin Context!A;
 		size_t chunkSize;
 
 		this(size_t chunkSize)
@@ -150,9 +148,8 @@ auto pullAlloc(Pipeline)(auto ref Pipeline pipeline, size_t chunkSize = 4096)
 
 private template DefaultPeekPushAdapter(E) {
 	@peekSink!E @pushSource!E
-	struct DefaultPeekPushAdapter(Source, Sink) {
-		Source source;
-		Sink sink;
+	struct DefaultPeekPushAdapter(alias Context, A...) {
+		mixin Context!A;
 		size_t minSliceSize;
 
 		this(size_t minSliceSize)
@@ -185,9 +182,8 @@ auto peekPush(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_t
 
 private template DefaultPeekAllocAdapter(E) {
 	@peekSink!E @allocSource!E
-	struct DefaultPeekAllocAdapter(Source, Sink) {
-		Source source;
-		Sink sink;
+	struct DefaultPeekAllocAdapter(alias Context, A...) {
+		mixin Context!A;
 		size_t minSliceSize;
 		size_t maxSliceSize;
 
@@ -228,8 +224,8 @@ auto peekAlloc(Pipeline)(auto ref Pipeline pipeline, size_t minSliceSize = size_
 
 private template DefaultPushAllocAdapter(E) {
 	@pushSink!E @allocSource!E
-	struct DefaultPushAllocAdapter(Sink) {
-		Sink sink;
+	struct DefaultPushAllocAdapter(alias Context, A...) {
+		mixin Context!A;
 
 		size_t push(const(E)[] buf)
 		{
@@ -255,10 +251,9 @@ auto pushAlloc(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultPushPullAdapter(Buffer, E) {
 	@pushSink!E @pullSource!E
-	struct DefaultPushPullAdapter(alias Scheduler) {
+	struct DefaultPushPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
-
-		mixin Scheduler;
+		mixin Context!A;
 
 		Buffer buffer;
 		const(E)[] pushed;
@@ -381,9 +376,9 @@ private template ImplementAllocCommit(E) {
 
 private template DefaultPushPeekAdapter(Buffer, E) {
 	@pushSink!E @peekSource!E
-	struct DefaultPushPeekAdapter(alias Scheduler) {
+	struct DefaultPushPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
-		mixin Scheduler;
+		mixin Context!A;
 		Buffer buffer;
 
 		this()(auto ref Buffer buffer)
@@ -428,9 +423,9 @@ auto pushPeek(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultAllocPeekAdapter(Buffer, E) {
 	@allocSink!E @peekSource!E
-	struct DefaultAllocPeekAdapter(alias Scheduler) {
+	struct DefaultAllocPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
-		mixin Scheduler;
+		mixin Context!A;
 		Buffer buffer;
 
 		this()(auto ref Buffer buffer)
@@ -462,9 +457,9 @@ auto allocPeek(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultAllocPullAdapter(Buffer, E) {
 	@allocSink!E @pullSource!E
-	struct DefaultAllocPullAdapter(alias Scheduler) {
+	struct DefaultAllocPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
-		mixin Scheduler;
+		mixin Context!A;
 		Buffer buffer;
 
 		this()(auto ref Buffer buffer)
@@ -511,8 +506,8 @@ auto allocPull(Pipeline)(auto ref Pipeline pipeline)
 
 private template DefaultAllocPushAdapter(Buffer, E) {
 	@allocSink!E @pushSource!E
-	struct DefaultAllocPushAdapter(Sink) {
-		Sink sink;
+	struct DefaultAllocPushAdapter(alias Context, A...) {
+		mixin Context!A;
 		Buffer buffer;
 
 		this()(auto ref Buffer buffer)

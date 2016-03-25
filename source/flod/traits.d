@@ -164,6 +164,7 @@ enum isPassiveSink(alias S) = isPushSink!S || isAllocSink!S;
 enum isActiveSink(alias S) = isPeekSink!S || isPullSink!S;
 enum isSink(alias S) = isPassiveSink!S || isActiveSink!S;
 
+enum isStage(alias S) = isSource!S || isSink!S;
 
 /** Returns `true` if `S[0]` is a source and `S[1]` is a sink and they both use the same
  *  method of passing data.
