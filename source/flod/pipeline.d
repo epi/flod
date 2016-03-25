@@ -166,7 +166,7 @@ private struct Schema(alias S, Src, A...) {
 			.str!NextStage ~ " expects " ~ SinkE.stringof);
 
 		static if (areCompatible!(LastStage, NextStage)) {
-			auto result = pipeline!NextStage(this, nextArgs);
+			auto result = schema!NextStage(this, nextArgs);
 			static if (isSource!NextStage || isSink!FirstStage)
 				return result;
 			else
@@ -251,7 +251,8 @@ private struct Schema(alias S, Src, A...) {
 	}
 }
 
-private auto pipeline(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
+/// Factory function for Schema
+private auto schema(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
 {
 	return Schema!(Stage, Source, Args)(sourceSchema, args);
 }
@@ -278,7 +279,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else
-		return pipeline!Stage(NullSchema(), args);
+		return schema!Stage(NullSchema(), args);
 }
 
 version(unittest) {
