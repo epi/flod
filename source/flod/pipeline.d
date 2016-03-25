@@ -93,10 +93,6 @@ private mixin template Context(PL, alias Stage, size_t index, size_t driverIndex
 
 private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 {
-	debug(FlodTraceLifetime) {
-		import std.experimental.logger : tracef;
-		tracef("Construct at %x..%x %s with %s", &t, &t + 1, .str!T, Args.stringof);
-	}
 	static if (__traits(hasMember, t, "__ctor")) {
 		t.__ctor(args);
 	} else static if (Args.length > 0) {
