@@ -175,45 +175,6 @@ private struct Schema(alias S, Src, A...) {
 		}
 	}
 
-	static struct Type(MT) {
-		alias Metadata = MT;
-
-		template IthType(size_t i) {
-			alias StageType = StageSeq[i];
-			alias IthType = StageType!(Context, Type, StageType, i, drivers[i]);
-		}
-
-		template StageTypeTuple(T, size_t i, Stages...) {
-			static if (i >= Stages.length)
-				alias Tuple = AliasSeq!();
-			else {
-				alias Tuple = AliasSeq!(IthType!i, StageTypeTuple!(T, i + 1, Stages).Tuple);
-			}
-		}
-
-		alias Tup = StageTypeTuple!(Type, 0, StageSeq).Tuple;
-		Tup tup;
-		Metadata metadata;
-
-		static ref Type outer(size_t thisIndex)(ref IthType!thisIndex thisref)
-		{
-			return *(cast(Type*) (cast(void*) &thisref - Type.init.tup[thisIndex].offsetof));
-		}
-
-		static if (isPeekSource!LastStage) {
-			const(ElementType)[] peek()(size_t n) { return tup[index].peek(n); }
-			void consume()(size_t n) { tup[index].consume(n); }
-		} else static if (isPullSource!LastStage) {
-			size_t pull()(ElementType[] buf) { return tup[index].pull(buf); }
-		} else {
-			// TODO: sink pipelines.
-			void run()()
-			{
-				tup[driverIndex].run();
-			}
-		}
-	}
-
 	void construct(T)(ref T t)
 	{
 		static if (hasSource) {
@@ -227,22 +188,18 @@ private struct Schema(alias S, Src, A...) {
 	static if (!isSink!FirstStage && !isSource!LastStage) {
 		void run()()
 		{
-			alias PS = FilterTagAttributes!(0, StageSeq);
-			alias MT = Metadata!PS;
-			Type!MT t;
-			this.construct(t);
-			t.run();
+			Pipeline!Schema p;
+			construct(p);
+			p.run();
 		}
 	}
 
 	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
 		auto create()()
 		{
-			alias PS = FilterTagAttributes!(0, StageSeq);
-			alias MT = Metadata!PS;
-			Type!MT t;
-			construct(t);
-			return t;
+			Pipeline!Schema p;
+			construct(p);
+			return p;
 		}
 	}
 }
@@ -276,6 +233,50 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else
 		return schema!Stage(NullSchema(), args);
+}
+
+/// A pipeline built based on schema S.
+struct Pipeline(S)
+{
+	alias Schema = S;
+
+	template StageType(size_t i) {
+		alias Stage = Schema.StageSeq[i];
+		alias StageType = Stage!(Context, Pipeline, Stage, i, Schema.drivers[i]);
+	}
+
+	template StageTypeTuple(size_t i) {
+		static if (i >= Schema.StageSeq.length)
+			alias Tuple = AliasSeq!();
+		else {
+			alias Tuple = AliasSeq!(StageType!i, StageTypeTuple!(i + 1).Tuple);
+		}
+	}
+
+	alias TagSpecs = FilterTagAttributes!(0, Schema.StageSeq);
+	alias Metadata = .Metadata!TagSpecs;
+	alias Tuple = StageTypeTuple!0.Tuple;
+
+	Tuple tup;
+	Metadata metadata;
+
+	static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
+	{
+		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
+	}
+
+	static if (isPeekSource!(Schema.LastStage)) {
+		const(Schema.ElementType)[] peek()(size_t n) { return tup[Schema.index].peek(n); }
+		void consume()(size_t n) { tup[Schema.index].consume(n); }
+	} else static if (isPullSource!(Schema.LastStage)) {
+		size_t pull()(Schema.ElementType[] buf) { return tup[Schema.index].pull(buf); }
+	} else {
+		// TODO: sink pipelines.
+		void run()()
+		{
+			tup[Schema.driverIndex].run();
+		}
+	}
 }
 
 version(unittest) {
