@@ -150,3 +150,52 @@ unittest {
 	iota(89, 94).pipeFromInputRange.copy(app);
 	assert(app.data[] == [89, 90, 91, 92, 93]);
 }
+
+template DelegateSource(alias fun, E) {
+	@pushSource!E
+	struct DelegateSource(alias Context, A...) {
+		mixin Context!A;
+
+		void put()(const(E)[] b)
+		{
+			sink.push(b);
+		}
+
+		void run()()
+		{
+			fun(&this);
+		}
+	}
+}
+
+package auto pipeFromDelegate(E, alias fun)()
+{
+	return pipe!(DelegateSource!(fun, E));
+}
+
+unittest {
+	import std.algorithm : map;
+	import std.stdio : writeln;
+	int z = 2;
+	auto x = [10, 20, 30].map!(n => n + z);
+}
+
+unittest {
+	import std.format : formattedWrite;
+	import std.array : appender;
+
+	auto app = appender!string;
+	/* FIXME:
+	Fails if the delegate literal passed to pipeFromDelegate accesses the calling function's context.
+	Error: function flod.range.__unittestL186_57.DelegateSource!(__lambda1, char).Stage!(...).DelegateSource
+		.run!().run cannot access frame of function flod.range.__unittestL186_57
+	*/
+	static int a = 42;
+	pipeFromDelegate!(char, (orange)
+		{
+			orange.formattedWrite("first line %d\n", a);
+			orange.formattedWrite("formatted %012x line\n", 0xdeadbeef);
+		})
+		.copy(app);
+	assert(app.data == "first line 42\nformatted 0000deadbeef line\n");
+}

@@ -48,13 +48,15 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-private mixin template Context(PL, alias Stage, size_t index, size_t driverIndex) {
+private mixin template Context(PL, Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
+	size_t index, size_t driverIndex)
+{
 	import flod.pipeline : isPassiveSink, isPassiveSource;
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }
 	@property ref auto sourceDriver()() { return outer.tup[driverIndex]; }
-	static if (isPassiveSink!Stage && isPassiveSource!Stage) {
+	static if (passiveFilter) {
 		SinkDrivenFiberScheduler _flod_scheduler;
 
 		int yield()() { return _flod_scheduler.yield(); }
@@ -235,6 +237,12 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return schema!Stage(NullSchema(), args);
 }
 
+///
+auto pipe(E, alias Dg)()
+{
+	return pipeFromDelegate!(E, Dg);
+}
+
 /// A pipeline built based on schema S.
 struct Pipeline(S)
 {
@@ -242,7 +250,9 @@ struct Pipeline(S)
 
 	template StageType(size_t i) {
 		alias Stage = Schema.StageSeq[i];
-		alias StageType = Stage!(Context, Pipeline, Stage, i, Schema.drivers[i]);
+		alias StageType = Stage!(Context, Pipeline,
+			(isPassiveSink!Stage && isPassiveSource!Stage)
+			? Yes.passiveFilter : No.passiveFilter, i, Schema.drivers[i]);
 	}
 
 	template StageTypeTuple(size_t i) {
@@ -1125,4 +1135,18 @@ unittest {
 	outputIndex = 0;
 	r.pipe!TestPullSink(Arg!TestPullSink());
 	assert(outputArray[0 .. outputIndex] == iota(55, 1555).take(20).array());
+}
+
+unittest {
+	import std.algorithm : copy;
+	import std.range : iota;
+	outputArray.length = 5000;
+	outputIndex = 0;
+	pipe!(ulong, (o)
+		{
+			auto r = iota(42UL, 1024);
+			r.copy(o);
+		})
+		.pipe!TestPushSink(Arg!TestPushSink());
+	assert(outputArray[0 .. outputIndex] == iota(42UL, 1024).array());
 }
