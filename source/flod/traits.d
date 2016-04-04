@@ -8,6 +8,32 @@ module flod.traits;
 
 import flod.meta : str, Id;
 
+///
+enum Method {
+	none = -1,
+	pull = 0,
+	peek = 1,
+	push = 2,
+	alloc = 3,
+}
+
+struct MethodAttribute {
+	Method sinkMethod;
+	Method sourceMethod;
+}
+
+MethodAttribute source(Method sourceMethod) {
+	return MethodAttribute(Method.none, sourceMethod);
+}
+
+MethodAttribute sink(Method sinkMethod) {
+	return MethodAttribute(sinkMethod, Method.none);
+}
+
+MethodAttribute filter(Method sinkMethod, Method sourceMethod) {
+	return MethodAttribute(sinkMethod, sourceMethod);
+}
+
 struct PullSource(E) {
 	size_t pull(E[] buf) { return buf.length; }
 	enum methodStr = "pull";
