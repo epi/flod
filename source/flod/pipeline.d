@@ -15,6 +15,143 @@ import flod.metadata;
 import flod.range;
 import flod.traits;
 
+/**
+Find optimal choice of methods for all stages.
+
+Each stage may implement more than one method or method pair. This function is used in compile time
+to find a set of methods that will result in the smallest overhead, according to predefined
+static costs of connecting sinks to sources implementing different methods.
+Compatible methods always have a cost of 0. Implicit adapters are given positive costs depending
+on whether they involve e.g. data copying or context switching.
+*/
+private MethodAttribute[] chooseOptimalMethods(Flag!`bruteForce` brute_force = No.bruteForce)(MethodAttribute[][] stages)
+{
+	assert(stages.length >= 2);
+
+	// FIXME: these numbers are made up out of thin air, update them based on some benchmarks.
+	enum pairwiseCost = [
+		[ 0, 5, 15, 10 ],
+		[ 50, 0, 10, 60 ],
+		[ 145, 95, 0, 50 ],
+		[ 95, 45, 5, 0 ]
+	];
+
+	static if (brute_force) {
+		// just test all possible permutations
+		auto result = new size_t[stages.length];
+		auto minCost = uint.max;
+		auto ind = new size_t[stages.length];
+		for (;;) {
+			uint cost;
+			foreach (i; 1 .. stages.length)
+				cost += pairwiseCost[stages[i - 1][ind[i - 1]].sourceMethod][stages[i][ind[i]].sinkMethod];
+			if (cost < minCost) {
+				minCost = cost;
+				result[] = ind[];
+			}
+			foreach (i; 0 .. stages.length) {
+				if (++ind[i] < stages[i].length)
+					break;
+				ind[i] = 0;
+				if (i == stages.length - 1) {
+					import std.range : enumerate, array;
+					return result.enumerate.map!(t => stages[t.index][t.value]).array();
+				}
+			}
+		}
+	} else {
+		// solve using dynamic programming
+		static struct Choice {
+			size_t previous = 0;
+			uint totalCost = 0;
+		}
+		Choice[][] choices;
+		choices.length = stages.length;
+		choices[0].length = stages[0].length;
+		foreach (stage; 1 .. stages.length) {
+			choices[stage].length = stages[stage].length;
+			foreach (sinkindex, sink; stages[stage]) {
+				size_t ch;
+				uint mincost = uint.max;
+				foreach (sourceindex, source; stages[stage - 1]) {
+					auto cost = choices[stage - 1][sourceindex].totalCost
+						+ pairwiseCost[source.sourceMethod][sink.sinkMethod];
+					if (cost < mincost) {
+						ch = sourceindex;
+						mincost = cost;
+					}
+				}
+				choices[stage][sinkindex] = Choice(ch, mincost);
+			}
+		}
+		auto result = new MethodAttribute[](stages.length);
+		// topNIndex doesn't work in CT...
+		import std.algorithm : minPos;
+		auto lastindex = choices[$ - 1].length - minPos!((a, b) => a.totalCost < b.totalCost)(choices[$ - 1]).length;
+		foreach_reverse (stage, ref ma; result) {
+			ma = stages[stage][lastindex];
+			lastindex = choices[stage][lastindex].previous;
+		}
+		return result;
+	}
+}
+
+version(unittest) {
+	MethodAttribute[][] methodAttributesFromString(string str)
+	{
+		enum tr = [
+			"pull" : Method.pull,
+			"peek" : Method.peek,
+			"push" : Method.push,
+			"alloc" : Method.alloc ];
+		auto stages = str.split(",");
+		return stages[0].split("/").map!(a => source(tr[a])).array
+			~ stages[1 .. $ - 1].map!(st =>
+				st.split("/")
+					.map!(m => m.split("-"))
+					.map!(m => filter(tr[m[0]], tr[m[1]]))
+					.array
+				).array
+			~ stages[$ - 1].split("/").map!(a => sink(tr[a])).array;
+	}
+
+	unittest {
+		assert(methodAttributesFromString(
+			"pull/peek,push") == [
+				[ source(Method.pull), source(Method.peek) ],
+				[ sink(Method.push) ]
+			]);
+		assert(methodAttributesFromString(
+			"pull/peek/alloc,push-alloc/alloc-pull,peek-push,peek-pull/push-peek/push-alloc,push/peek") == [
+				[ source(Method.pull), source(Method.peek), source(Method.alloc) ],
+				[ filter(Method.push, Method.alloc), filter(Method.alloc, Method.pull) ],
+				[ filter(Method.peek, Method.push) ],
+				[ filter(Method.peek, Method.pull), filter(Method.push, Method.peek), filter(Method.push, Method.alloc) ],
+				[ sink(Method.push), sink(Method.peek) ]
+			]);
+	}
+
+	bool testOptimizeChain(string str)
+	{
+		auto inp = methodAttributesFromString(str);
+		auto outp = chooseOptimalMethods(inp);
+		auto outpb = chooseOptimalMethods!(Yes.bruteForce)(inp);
+		assert(outp == outpb, {
+				import std.experimental.logger : logf;
+				logf("bf:  %s", outpb);
+				logf("dyn: %s", outp);
+				return str;
+			}());
+		return true;
+	}
+}
+
+unittest {
+	testOptimizeChain("pull,pull");
+	testOptimizeChain("pull/peek/alloc,push-alloc/alloc-peek,peek-alloc/alloc-peek,push-alloc/alloc-peek/peek-push,push");
+	enum a = testOptimizeChain("pull,peek-pull/alloc-pull,peek");
+}
+
 struct SinkDrivenFiberScheduler {
 	import core.thread : Fiber;
 	Fiber fiber;
@@ -318,7 +455,7 @@ version(unittest) {
 		return fm;
 	}
 
-	ulong filter(string f)(ulong a) {
+	ulong filterImpl(string f)(ulong a) {
 		enum fm = filterMark(f);
 		return (a << 4) | fm;
 	}
@@ -506,7 +643,7 @@ version(unittest) {
 
 		const(ulong)[] peek(size_t n)
 		{
-			return source.peek(n).map!(filter!"peek").array();
+			return source.peek(n).map!(filterImpl!"peek").array();
 		}
 		void consume(size_t n) { source.consume(n); }
 	}
@@ -520,7 +657,7 @@ version(unittest) {
 		{
 			auto ib = source.peek(buf.length);
 			auto len = min(ib.length, buf.length);
-			ib.take(len).map!(filter!"peekPull").copy(buf);
+			ib.take(len).map!(filterImpl!"peekPull").copy(buf);
 			source.consume(len);
 			return len;
 		}
@@ -535,7 +672,7 @@ version(unittest) {
 		{
 			for (;;) {
 				auto ib = source.peek(4096);
-				auto ob = ib.map!(filter!"peekPush").array();
+				auto ob = ib.map!(filterImpl!"peekPush").array();
 				source.consume(ib.length);
 				if (sink.push(ob) < 4096)
 					break;
@@ -556,7 +693,7 @@ version(unittest) {
 				if (!sink.alloc(buf, ib.length))
 					assert(0);
 				auto len = min(ib.length, buf.length);
-				ib.take(len).map!(filter!"peekAlloc").copy(buf);
+				ib.take(len).map!(filterImpl!"peekAlloc").copy(buf);
 				source.consume(len);
 				if (sink.commit(len) < 4096)
 					break;
@@ -573,7 +710,7 @@ version(unittest) {
 		{
 			size_t n = source.pull(buf);
 			foreach (ref b; buf[0 .. n])
-				b = b.filter!"pull";
+				b = b.filterImpl!"pull";
 			return n;
 		}
 	}
@@ -588,7 +725,7 @@ version(unittest) {
 			auto buf = new ulong[n];
 			size_t m = source.pull(buf[]);
 			foreach (ref b; buf[0 .. m])
-				b = b.filter!"pullPeek";
+				b = b.filterImpl!"pullPeek";
 			return buf[0 .. m];
 		}
 		void consume(size_t n) {}
@@ -605,7 +742,7 @@ version(unittest) {
 				ulong[4096] buf;
 				auto n = source.pull(buf[]);
 				foreach (ref b; buf[0 .. n])
-					b = b.filter!"pullPush";
+					b = b.filterImpl!"pullPush";
 				if (sink.push(buf[0 .. n]) < 4096)
 					break;
 			}
@@ -625,7 +762,7 @@ version(unittest) {
 					assert(0);
 				auto n = source.pull(buf[]);
 				foreach (ref b; buf[0 .. n])
-					b = b.filter!"pullAlloc";
+					b = b.filterImpl!"pullAlloc";
 				if (sink.commit(n) < 4096)
 					break;
 			}
@@ -639,7 +776,7 @@ version(unittest) {
 
 		size_t push(const(ulong)[] buf)
 		{
-			return sink.push(buf.map!(filter!"push").array());
+			return sink.push(buf.map!(filterImpl!"push").array());
 		}
 	}
 
@@ -656,7 +793,7 @@ version(unittest) {
 			if (!sink.alloc(ob, buf.length))
 				assert(0);
 			auto len = min(buf.length, ob.length);
-			buf.take(len).map!(filter!"pushAlloc").copy(ob);
+			buf.take(len).map!(filterImpl!"pushAlloc").copy(ob);
 			return sink.commit(len);
 		}
 	}
@@ -669,7 +806,7 @@ version(unittest) {
 
 		size_t push(const(ulong)[] buf)
 		{
-			buffer ~= buf.map!(filter!"pushPull").array();
+			buffer ~= buf.map!(filterImpl!"pushPull").array();
 			if (yield())
 				return 0;
 			return buf.length;
@@ -697,7 +834,7 @@ version(unittest) {
 
 		size_t push(const(ulong)[] buf)
 		{
-			buffer ~= buf.map!(filter!"pushPeek").array();
+			buffer ~= buf.map!(filterImpl!"pushPeek").array();
 			if (yield())
 				return 0;
 			return buf.length;
@@ -734,7 +871,7 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buf[0 .. n])
-				b = b.filter!"alloc";
+				b = b.filterImpl!"alloc";
 			return sink.commit(n);
 		}
 	}
@@ -753,7 +890,7 @@ version(unittest) {
 
 		size_t commit(size_t n)
 		{
-			size_t m = sink.push(buffer[0 .. n].map!(filter!"allocPush").array());
+			size_t m = sink.push(buffer[0 .. n].map!(filterImpl!"allocPush").array());
 			buffer = buffer[m .. $];
 			return m;
 		}
@@ -777,7 +914,7 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buffer[writeOffset .. writeOffset + n])
-				b = b.filter!"allocPull";
+				b = b.filterImpl!"allocPull";
 			writeOffset += n;
 			if (yield())
 				return 0;
@@ -816,7 +953,7 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buffer[writeOffset .. writeOffset + n])
-				b = b.filter!"allocPeek";
+				b = b.filterImpl!"allocPeek";
 			writeOffset += n;
 			if (yield())
 				return 0;
