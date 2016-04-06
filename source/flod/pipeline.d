@@ -6,7 +6,7 @@
  */
 module flod.pipeline;
 
-import std.meta : AliasSeq;
+import std.meta : AliasSeq, staticMap;
 import std.range : isDynamicArray, isInputRange;
 import std.typecons : Flag, Yes, No;
 
@@ -105,14 +105,14 @@ version(unittest) {
 			"push" : Method.push,
 			"alloc" : Method.alloc ];
 		auto stages = str.split(",");
-		return stages[0].split("/").map!(a => source(tr[a])).array
+		return stages[0].split("/").map!(a => source(tr[a]).methods).array
 			~ stages[1 .. $ - 1].map!(st =>
 				st.split("/")
 					.map!(m => m.split("-"))
-					.map!(m => filter(tr[m[0]], tr[m[1]]))
+					.map!(m => filter(tr[m[0]], tr[m[1]]).methods)
 					.array
 				).array
-			~ stages[$ - 1].split("/").map!(a => sink(tr[a])).array;
+			~ stages[$ - 1].split("/").map!(a => sink(tr[a]).methods).array;
 	}
 
 	unittest {
@@ -188,7 +188,6 @@ struct SinkDrivenFiberScheduler {
 private mixin template Context(PL, Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
 	size_t index, size_t driverIndex)
 {
-	import flod.pipeline : isPassiveSink, isPassiveSource;
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }

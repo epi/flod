@@ -6,43 +6,76 @@
  */
 module flod.traits;
 
+import std.meta : AliasSeq, Filter, NoDuplicates, staticMap;
 import flod.meta : str, Id;
 
-///
+/// Enumerates all methods of passing data between stages.
 enum Method {
-	none = -1,
-	pull = 0,
-	peek = 1,
-	push = 2,
-	alloc = 3,
+	pull = 0,  /// Sink requests that the source fill sink's buffer with data.
+	peek = 1,  /// Sink requests a read-only view on source's buffer.
+	push = 2,  /// Source requests that the sink accepts data in source's buffer.
+	alloc = 3, /// Source requests a writable view on sink's buffer.
 }
+
+private enum nullMethod = cast(Method) -1;
 
 struct MethodAttribute {
-	Method sinkMethod;
-	Method sourceMethod;
+	Method sinkMethod = nullMethod;
+	Method sourceMethod = nullMethod;
 }
 
-MethodAttribute source(Method sourceMethod) {
-	return MethodAttribute(Method.none, sourceMethod);
+private struct TypedMethodAttribute(SinkE, SourceE) {
+	alias SinkElementType = SinkE;
+	alias SourceElementType = SourceE;
+	MethodAttribute methods;
+	alias methods this;
 }
 
-MethodAttribute sink(Method sinkMethod) {
-	return MethodAttribute(sinkMethod, Method.none);
+/// This attribute specifies that the stage is a source.
+auto source(E = void)(Method source_method)
+{
+	return TypedMethodAttribute!(void, E)(
+		MethodAttribute(nullMethod, source_method));
 }
 
-MethodAttribute filter(Method sinkMethod, Method sourceMethod) {
-	return MethodAttribute(sinkMethod, sourceMethod);
+/// This attribute specifies that the stage is a sink.
+auto sink(E = void)(Method sink_method)
+{
+	return TypedMethodAttribute!(E, void)(
+		MethodAttribute(sink_method, nullMethod));
 }
 
-template getMethods(alias S) {
-	import std.meta : Filter;
-	enum isMethodAttribute(a...) = is(typeof(a[0]) == MethodAttribute);
-	int mask(MethodAttribute ma)
-	{
-		return ((ma.sinkMethod != Method.none) ? 2 : 0)
-			| ((ma.sourceMethod != Method.none) ? 1 : 0);
+/// This attribute specifies that the stage is a filter.
+auto filter(E...)(Method sink_method, Method source_method)
+{
+	auto ma = MethodAttribute(sink_method, source_method);
+	static if (E.length == 0)
+		return TypedMethodAttribute!(void,  void)(ma);
+	else static if (E.length == 1)
+		return TypedMethodAttribute!(void,  E[0])(ma);
+	else static if (E.length == 2)
+		return TypedMethodAttribute!(E[0], E[1])(ma);
+	else
+		static assert(0, "Too many types specified");
+}
+
+/// ditto
+auto filter(E...)(Method method) { return filter!E(method, method); }
+
+private template getMethodAttributes(alias S) {
+	private {
+		alias getTypeOf(Z...) = typeof(Z[0]);
+		enum isNotVoid(S) = !is(S == void);
+		enum isMethodAttribute(Z...) = is(typeof(Z[0]) == TypedMethodAttribute!(A, B), A, B);
+		template getNthType(size_t n) {
+			alias getNthType(M : TypedMethodAttribute!EL, EL...) = EL[n];
+		}
+		template getUntyped(Z...) {
+			enum getUntyped = Z[0].methods;
+		}
 	}
-	deprecated {
+
+	private deprecated {
 		alias traits = Traits!(None, None, void, void, __traits(getAttributes, S));
 		static if (is(Id!(traits.Source) == Id!PullSource))
 			enum sourcem = Method.pull;
@@ -53,7 +86,7 @@ template getMethods(alias S) {
 		else static if (is(Id!(traits.Source) == Id!AllocSource))
 			enum sourcem = Method.alloc;
 		else
-			enum sourcem = Method.none;
+			enum sourcem = nullMethod;
 		static if (is(Id!(traits.Sink) == Id!PullSink))
 			enum sinkm = Method.pull;
 		else static if (is(Id!(traits.Sink) == Id!PeekSink))
@@ -63,31 +96,75 @@ template getMethods(alias S) {
 		else static if (is(Id!(traits.Sink) == Id!AllocSink))
 			enum sinkm = Method.alloc;
 		else
-			enum sinkm = Method.none;
-		static if (sinkm != Method.none || sourcem != Method.none)
-			enum ma = [ MethodAttribute(sinkm, sourcem) ];
-		else
-			enum ma = [];
+			enum sinkm = nullMethod;
 	}
-	enum getMethods = ma ~ [ Filter!(isMethodAttribute, __traits(getAttributes, S)) ];
-	static if (getMethods.length) {
+	static if (sinkm != nullMethod || sourcem != nullMethod)
+		deprecated alias deprecatedAttributes =
+			AliasSeq!(filter!(traits.SinkElementType, traits.SourceElementType)(sinkm, sourcem));
+	else
+		alias deprecatedAttributes = AliasSeq!();
+
+	alias typed = AliasSeq!(deprecatedAttributes, Filter!(isMethodAttribute, __traits(getAttributes, S)));
+	enum untyped = [ staticMap!(getUntyped, typed) ];
+
+	private {
+		alias allNthTypes(size_t n) =
+			NoDuplicates!(
+				Filter!(
+					isNotVoid,
+					staticMap!(
+						getNthType!n,
+						staticMap!(getTypeOf, typed))));
+		alias SinkElementTypes = allNthTypes!0;
+		alias SourceElementTypes = allNthTypes!1;
+	}
+
+	alias SinkElementType = AliasSeq!(SinkElementTypes, void)[0];
+	alias SourceElementType = AliasSeq!(SourceElementTypes, void)[0];
+
+	// check if all attributes define the same pair of types (or void, i.e. unspecified)
+	static assert(SourceElementTypes.length <= 1,
+		"Conflicting source element types specified: " ~ SourceElementTypes.stringof);
+	static assert(SinkElementTypes.length <= 1,
+		"Conflicting sink element types specified: " ~ SinkElementTypes.stringof);
+
+	static if (untyped.length >= 2) {
 		// check if methods for different kinds of stages aren't mixed
-		import std.algorithm : reduce, map;
-		static assert(reduce!((a, b) => a | b)(0, getMethods.map!mask)
-			== reduce!((a, b) => a & b)(3, getMethods.map!mask),
+		static assert({
+				import std.algorithm : reduce, map;
+				int mask(MethodAttribute ma)
+				{
+					return ((ma.sinkMethod != nullMethod) ? 2 : 0)
+						| ((ma.sourceMethod != nullMethod) ? 1 : 0);
+				}
+				return reduce!((a, b) => a | b)(0, untyped.map!mask)
+					== reduce!((a, b) => a & b)(3, untyped.map!mask); }(),
 			"A stage must be either a source, a sink or a filter - not a mix thereof");
 	}
 }
 
+///
+enum getMethods(alias S) = getMethodAttributes!S.untyped;
+
+///
+alias SinkElementType(alias S) = getMethodAttributes!S.SinkElementType;
+
+///
+alias SourceElementType(alias S) = getMethodAttributes!S.SourceElementType;
+
 unittest {
 	struct Foo {}
 	static assert(getMethods!Foo == []);
+	static assert(is(getMethodAttributes!Foo.SinkElementType == void));
+	static assert(is(getMethodAttributes!Foo.SourceElementType == void));
 }
 
 unittest {
 	@pushSink!int @pullSource!ulong
 	struct Foo {}
 	static assert(getMethods!Foo == [ filter(Method.push, Method.pull) ]);
+	static assert(is(getMethodAttributes!Foo.SinkElementType == int));
+	static assert(is(getMethodAttributes!Foo.SourceElementType == ulong));
 }
 
 unittest {
@@ -95,12 +172,25 @@ unittest {
 	@sink(Method.push)
 	struct Foo {}
 	static assert(getMethods!Foo == [ sink(Method.alloc), sink(Method.push) ]);
+	static assert(is(SinkElementType!Foo == int));
 }
 
 unittest {
 	@source(Method.push) @sink(Method.push)
 	struct Foo {}
-	static assert(!__traits(compiles, getMethods!Foo));
+	static assert(!__traits(compiles, getMethods!Foo)); // error: specified both source and sink attributes
+}
+
+unittest {
+	@source!int(Method.push) @source!double(Method.pull)
+	struct Foo {}
+	static assert(!__traits(compiles, getMethods!Foo)); // error: conflicting source types (int, double)
+}
+
+unittest {
+	@filter!(int, int)(Method.push) @filter!(double, int)(Method.push)
+	struct Foo {}
+	static assert(!__traits(compiles, getMethods!Foo)); // error: conflicting sink types (int, double)
 }
 
 deprecated {
@@ -231,15 +321,23 @@ unittest {
 	static assert(!__traits(compiles, Traits!Baz)); // sink interface specified 3x
 }
 
-enum isPullSource(alias S) = areSame!(Traits!S.Source, PullSource);
-enum isPeekSource(alias S) = areSame!(Traits!S.Source, PeekSource);
-enum isPushSource(alias S) = areSame!(Traits!S.Source, PushSource);
-enum isAllocSource(alias S) = areSame!(Traits!S.Source, AllocSource);
+bool implementsMethod(string endp)(Method m, MethodAttribute[] attrs...) {
+	foreach (attr; attrs) {
+		mixin(`bool im = attr.` ~ endp ~ `Method == m;`);
+		if (im) return true;
+	}
+	return false;
+}
 
-enum isPullSink(alias S) = areSame!(Traits!S.Sink, PullSink);
-enum isPeekSink(alias S) = areSame!(Traits!S.Sink, PeekSink);
-enum isPushSink(alias S) = areSame!(Traits!S.Sink, PushSink);
-enum isAllocSink(alias S) = areSame!(Traits!S.Sink, AllocSink);
+enum isPullSource(alias S) = areSame!(Traits!S.Source, PullSource) || implementsMethod!`source`(Method.pull, getMethods!S);
+enum isPeekSource(alias S) = areSame!(Traits!S.Source, PeekSource) || implementsMethod!`source`(Method.peek, getMethods!S);
+enum isPushSource(alias S) = areSame!(Traits!S.Source, PushSource) || implementsMethod!`source`(Method.push, getMethods!S);
+enum isAllocSource(alias S) = areSame!(Traits!S.Source, AllocSource) || implementsMethod!`source`(Method.alloc, getMethods!S);
+
+enum isPullSink(alias S) = areSame!(Traits!S.Sink, PullSink) || implementsMethod!`sink`(Method.pull, getMethods!S);
+enum isPeekSink(alias S) = areSame!(Traits!S.Sink, PeekSink) || implementsMethod!`sink`(Method.peek, getMethods!S);
+enum isPushSink(alias S) = areSame!(Traits!S.Sink, PushSink) || implementsMethod!`sink`(Method.push, getMethods!S);
+enum isAllocSink(alias S) = areSame!(Traits!S.Sink, AllocSink) || implementsMethod!`sink`(Method.alloc, getMethods!S);
 
 unittest {
 	@pullSource!int @pullSink!bool
@@ -264,7 +362,7 @@ enum isSink(alias S) = isPassiveSink!S || isActiveSink!S;
 
 enum isStage(alias S) = isSource!S || isSink!S;
 
-/** Returns `true` if `S[0]` is a source and `S[1]` is a sink and they both use the same
+/** Returns `true` if `Source` is a source and `Sink` is a sink and they both use the same
  *  method of passing data.
  */
 enum areCompatible(alias Source, alias Sink) =
