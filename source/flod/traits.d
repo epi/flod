@@ -34,6 +34,77 @@ MethodAttribute filter(Method sinkMethod, Method sourceMethod) {
 	return MethodAttribute(sinkMethod, sourceMethod);
 }
 
+template getMethods(alias S) {
+	import std.meta : Filter;
+	enum isMethodAttribute(a...) = is(typeof(a[0]) == MethodAttribute);
+	int mask(MethodAttribute ma)
+	{
+		return ((ma.sinkMethod != Method.none) ? 2 : 0)
+			| ((ma.sourceMethod != Method.none) ? 1 : 0);
+	}
+	deprecated {
+		alias traits = Traits!(None, None, void, void, __traits(getAttributes, S));
+		static if (is(Id!(traits.Source) == Id!PullSource))
+			enum sourcem = Method.pull;
+		else static if (is(Id!(traits.Source) == Id!PeekSource))
+			enum sourcem = Method.peek;
+		else static if (is(Id!(traits.Source) == Id!PushSource))
+			enum sourcem = Method.push;
+		else static if (is(Id!(traits.Source) == Id!AllocSource))
+			enum sourcem = Method.alloc;
+		else
+			enum sourcem = Method.none;
+		static if (is(Id!(traits.Sink) == Id!PullSink))
+			enum sinkm = Method.pull;
+		else static if (is(Id!(traits.Sink) == Id!PeekSink))
+			enum sinkm = Method.peek;
+		else static if (is(Id!(traits.Sink) == Id!PushSink))
+			enum sinkm = Method.push;
+		else static if (is(Id!(traits.Sink) == Id!AllocSink))
+			enum sinkm = Method.alloc;
+		else
+			enum sinkm = Method.none;
+		static if (sinkm != Method.none || sourcem != Method.none)
+			enum ma = [ MethodAttribute(sinkm, sourcem) ];
+		else
+			enum ma = [];
+	}
+	enum getMethods = ma ~ [ Filter!(isMethodAttribute, __traits(getAttributes, S)) ];
+	static if (getMethods.length) {
+		// check if methods for different kinds of stages aren't mixed
+		import std.algorithm : reduce, map;
+		static assert(reduce!((a, b) => a | b)(0, getMethods.map!mask)
+			== reduce!((a, b) => a & b)(3, getMethods.map!mask),
+			"A stage must be either a source, a sink or a filter - not a mix thereof");
+	}
+}
+
+unittest {
+	struct Foo {}
+	static assert(getMethods!Foo == []);
+}
+
+unittest {
+	@pushSink!int @pullSource!ulong
+	struct Foo {}
+	static assert(getMethods!Foo == [ filter(Method.push, Method.pull) ]);
+}
+
+unittest {
+	@allocSink!int
+	@sink(Method.push)
+	struct Foo {}
+	static assert(getMethods!Foo == [ sink(Method.alloc), sink(Method.push) ]);
+}
+
+unittest {
+	@source(Method.push) @sink(Method.push)
+	struct Foo {}
+	static assert(!__traits(compiles, getMethods!Foo));
+}
+
+deprecated {
+
 struct PullSource(E) {
 	size_t pull(E[] buf) { return buf.length; }
 	enum methodStr = "pull";
@@ -70,6 +141,7 @@ struct AllocSink(E) {
 	bool alloc(ref E[] buf, size_t n) { buf = new E[n]; return true; }
 	void consume(size_t n) {}
 	enum methodStr = "alloc";
+}
 }
 
 enum pullSource(E) = PullSource!E();
