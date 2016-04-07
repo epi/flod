@@ -239,16 +239,30 @@ private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 	}
 }
 
-/**
-A placeholder for the initial stage's source schema.
-*/
-private struct NullSchema {
-	enum size_t length = 0;
-	enum size_t driverIndex = -1;
-	enum str = "";
-	enum treeStr(int indent) = "";
-	alias StageSeq = AliasSeq!();
-	enum size_t[] drivers = [];
+private struct StageSpec(alias S, A...) {
+	alias Stage = S;
+	alias Args = A;
+	Args args;
+}
+
+private enum bool isDriver(alias Stage) =
+	(isActiveSource!Stage && !isPassiveSink!Stage)
+		|| (isActiveSink!Stage && !isPassiveSource!Stage);
+
+private enum Origin { source, sink };
+
+private template getDriverMap(Origin origin, StageSeq...) {
+	static if (origin == Origin.sink) {
+		static if (StageSeq.length == 0)
+			enum size_t[] getDriverMap = [];
+		else {
+			enum size_t[] previous = .getDriverMap!(origin, StageSeq[0 .. $ - 1]);
+			enum size_t[] getDriverMap = previous ~
+				(isDriver!(StageSeq[$ - 1])
+					? StageSeq.length - 1
+					: ([ size_t(-1) ] ~ previous)[$ - 1]);
+		}
+	}
 }
 
 /**
@@ -263,32 +277,22 @@ Params:
     Src = Type of schema object describing the previous stages.
     A   = Types of arguments passed to S's instance ctor.
 */
-private struct Schema(alias S, Src, A...) {
+private struct Schema(S...) {
 	import std.conv : to;
-	alias LastStage = S;
-	alias Args = A;
-	alias Source = Src;
-	/// all stages as an AliasSeq.
-	alias StageSeq = AliasSeq!(Source.StageSeq, LastStage);
+	alias StageSpecSeq = S;
+	alias getStage(Z) = Z.Stage;
+	alias StageSeq = staticMap!(getStage, S, StageSpec!StageSpec)[0 .. $ - 1];
 	alias FirstStage = StageSeq[0];
+	alias LastStage = StageSeq[$ - 1];
 
-	private enum bool isDriver =
-		   (isActiveSource!LastStage && !isPassiveSink!LastStage)
-		|| (isActiveSink!LastStage && !isPassiveSource!LastStage);
-	enum size_t driverIndex = isDriver ? index : Source.driverIndex;
-	enum size_t index = Source.length;
-	enum size_t length  = Source.length + 1;
-	enum drivers = Source.drivers ~ driverIndex;
-
-	enum hasSource = !is(Source == NullSchema);
+	private enum drivers = getDriverMap!(Origin.sink, StageSeq);
+	private enum driverIndex = drivers[$ - 1];
+	enum size_t length = S.length;
 
 	static if (is(Traits!LastStage.SourceElementType W))
 		alias ElementType = W;
 
-	enum str = (hasSource ? Source.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!LastStage;
-
-	Source source;
-	Args args;
+	StageSpecSeq stages;
 
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
@@ -300,7 +304,8 @@ private struct Schema(alias S, Src, A...) {
 			.str!NextStage ~ " expects " ~ SinkE.stringof);
 
 		static if (areCompatible!(LastStage, NextStage)) {
-			auto result = schema!NextStage(this, nextArgs);
+			alias T = StageSpec!(NextStage, NextArgs);
+			auto result = Schema!(StageSpecSeq, T)(stages, T(nextArgs));
 			static if (isSource!NextStage || isSink!FirstStage)
 				return result;
 			else
@@ -313,14 +318,14 @@ private struct Schema(alias S, Src, A...) {
 		}
 	}
 
-	void construct(T)(ref T t)
+	auto construct(size_t i = 0)(ref Pipeline!Schema pipeline)
 	{
-		static if (hasSource) {
-			source.construct(t);
+		static if (i < StageSeq.length) {
+			constructInPlace(pipeline.tup[i], stages[i].args);
+			static if (isPassiveSink!(StageSeq[i]) && isPassiveSource!(StageSeq[i]))
+				pipeline.tup[i].spawn();
+			construct!(i + 1)(pipeline);
 		}
-		constructInPlace(t.tup[index], args);
-		static if (isPassiveSink!LastStage && isPassiveSource!LastStage)
-			t.tup[index].spawn();
 	}
 
 	static if (!isSink!FirstStage && !isSource!LastStage) {
@@ -340,12 +345,6 @@ private struct Schema(alias S, Src, A...) {
 			return p;
 		}
 	}
-}
-
-/// Factory function for Schema
-private auto schema(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
-{
-	return Schema!(Stage, Source, Args)(sourceSchema, args);
 }
 
 private template testSchema(Sch, alias test) {
@@ -369,8 +368,10 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
 	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
-	else
-		return schema!Stage(NullSchema(), args);
+	else {
+		alias T = StageSpec!(Stage, Args);
+		return Schema!T(T(args));
+	}
 }
 
 ///
@@ -392,7 +393,7 @@ struct Pipeline(S)
 	}
 
 	template StageTypeTuple(size_t i) {
-		static if (i >= Schema.StageSeq.length)
+		static if (i >= Schema.length)
 			alias Tuple = AliasSeq!();
 		else {
 			alias Tuple = AliasSeq!(StageType!i, StageTypeTuple!(i + 1).Tuple);
@@ -412,10 +413,10 @@ struct Pipeline(S)
 	}
 
 	static if (isPeekSource!(Schema.LastStage)) {
-		const(Schema.ElementType)[] peek()(size_t n) { return tup[Schema.index].peek(n); }
-		void consume()(size_t n) { tup[Schema.index].consume(n); }
+		const(Schema.ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
+		void consume()(size_t n) { tup[$ - 1].consume(n); }
 	} else static if (isPullSource!(Schema.LastStage)) {
-		size_t pull()(Schema.ElementType[] buf) { return tup[Schema.index].pull(buf); }
+		size_t pull()(Schema.ElementType[] buf) { return tup[$ - 1].pull(buf); }
 	} else {
 		// TODO: sink pipelines.
 		void run()()
