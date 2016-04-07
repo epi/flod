@@ -246,23 +246,16 @@ private struct StageSpec(alias S, A...) {
 }
 
 private enum bool isDriver(alias Stage) =
-	(isActiveSource!Stage && !isPassiveSink!Stage)
-		|| (isActiveSink!Stage && !isPassiveSource!Stage);
+	   (isActiveSource!Stage && !isPassiveSink!Stage)
+	|| (isActiveSink!Stage && !isPassiveSource!Stage);
 
-private enum Origin { source, sink };
-
-private template getDriverMap(Origin origin, StageSeq...) {
-	static if (origin == Origin.sink) {
-		static if (StageSeq.length == 0)
-			enum size_t[] getDriverMap = [];
-		else {
-			enum size_t[] previous = .getDriverMap!(origin, StageSeq[0 .. $ - 1]);
-			enum size_t[] getDriverMap = previous ~
-				(isDriver!(StageSeq[$ - 1])
-					? StageSeq.length - 1
-					: ([ size_t(-1) ] ~ previous)[$ - 1]);
-		}
-	}
+template getNextDriver(size_t i, StageSeq...) {
+	static if (i >= StageSeq.length)
+		enum getNextDriver = -1;
+	else static if (isDriver!(StageSeq[i]))
+		enum getNextDriver = i;
+	else
+		enum getNextDriver = getNextDriver!(i - 1, StageSeq);
 }
 
 /**
@@ -285,8 +278,6 @@ private struct Schema(S...) {
 	alias FirstStage = StageSeq[0];
 	alias LastStage = StageSeq[$ - 1];
 
-	private enum drivers = getDriverMap!(Origin.sink, StageSeq);
-	private enum driverIndex = drivers[$ - 1];
 	enum size_t length = S.length;
 
 	static if (is(Traits!LastStage.SourceElementType W))
@@ -388,8 +379,8 @@ struct Pipeline(S)
 	template StageType(size_t i) {
 		alias Stage = Schema.StageSeq[i];
 		alias StageType = Stage!(Context, Pipeline,
-			(isPassiveSink!Stage && isPassiveSource!Stage)
-			? Yes.passiveFilter : No.passiveFilter, i, Schema.drivers[i]);
+			(isPassiveSink!Stage && isPassiveSource!Stage) ? Yes.passiveFilter : No.passiveFilter,
+			i, getNextDriver!(i, Schema.StageSeq));
 	}
 
 	template StageTypeTuple(size_t i) {
@@ -421,7 +412,8 @@ struct Pipeline(S)
 		// TODO: sink pipelines.
 		void run()()
 		{
-			tup[Schema.driverIndex].run();
+			enum driverIndex = Schema.StageSeq.length - 1;
+			tup[getNextDriver!(driverIndex, Schema.StageSeq)].run();
 		}
 	}
 }
