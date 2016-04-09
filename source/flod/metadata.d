@@ -414,7 +414,7 @@ private:
 			_bar = bar;
 		}
 
-		size_t push(ubyte[] buf) { return buf.length; }
+		size_t push(const(ubyte)[] buf) { return buf.length; }
 
 		void onChange(string key)()
 		{
