@@ -294,7 +294,7 @@ private template DefaultPushPullAdapter(Buffer, E) {
 			// if not satisfied yet, switch to source fiber till push() is called again
 			// enough times to fill dest[]
 			do {
-				if (yield())
+				if (!pushed.length && yield())
 					break;
 				// pushed is the slice of the original buffer passed to push() by the source.
 				auto len = min(pushed.length, dest.length);
