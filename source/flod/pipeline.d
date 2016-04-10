@@ -152,7 +152,7 @@ unittest {
 	enum a = testOptimizeChain("pull,peek-pull/alloc-pull,peek");
 }
 
-struct SinkDrivenFiberScheduler {
+struct FiberSwitch {
 	import core.thread : Fiber;
 	Fiber fiber;
 	mixin NonCopyable;
@@ -170,6 +170,14 @@ struct SinkDrivenFiberScheduler {
 		}
 	}
 
+	/**
+	Switch context.
+
+	Executes the other context up to the point where it also calls yield()
+	on the same FiberSwitch, or returns.
+
+	Returns: non-zero if the other context finished execution.
+	*/
 	int yield()
 	{
 		if (fiber is null)
@@ -191,23 +199,24 @@ private mixin template Context(PL, Flag!`passiveFilter` passiveFilter = Yes.pass
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }
-	@property ref auto sourceDriver()() { return outer.tup[driverIndex]; }
-	static if (passiveFilter) {
-		SinkDrivenFiberScheduler _flod_scheduler;
 
-		int yield()() { return _flod_scheduler.yield(); }
+	static if (passiveFilter) {
+		FiberSwitch _flod_switch;
+
+		int yield()() { return _flod_switch.yield(); }
 		void spawn()()
 		{
 			import core.thread : Fiber;
-			if (!_flod_scheduler.fiber) {
-				static if (__traits(compiles, &sourceDriver.run!()))
-					auto runf = &sourceDriver.run!();
+			auto next_driver = &outer.tup[driverIndex];
+			if (!_flod_switch.fiber) {
+				static if (__traits(compiles, &next_driver.run!()))
+					auto runf = &next_driver.run!();
 				else
-					auto runf = &sourceDriver.run;
-				_flod_scheduler.fiber = new Fiber(runf, 65536);
+					auto runf = &next_driver.run;
+				_flod_switch.fiber = new Fiber(runf, 65536);
 			}
 		}
-		void stop()() { _flod_scheduler.stop(); }
+		void stop()() { _flod_switch.stop(); }
 	}
 
 	@property void tag(string key)(PL.Metadata.ValueType!key value)
@@ -245,18 +254,29 @@ private struct StageSpec(alias S, A...) {
 	Args args;
 }
 
+/**
+Determines which driver drives the entire pipeline in pipelines with multiple drivers.
+*/
+enum DriveMode {
+	source, /// The leftmost driver drives the entire pipeline.
+	sink    /// The rightmost driver drives the entire pipeline.
+}
+
 private enum bool isDriver(alias Stage) =
 	   (isActiveSource!Stage && !isPassiveSink!Stage)
 	|| (isActiveSink!Stage && !isPassiveSource!Stage);
 
-template getNextDriver(size_t i, StageSeq...) {
+private template getNextDriver(DriveMode mode, size_t i, StageSeq...) {
 	static if (i >= StageSeq.length)
 		enum getNextDriver = -1;
 	else static if (isDriver!(StageSeq[i]))
 		enum getNextDriver = i;
 	else
-		enum getNextDriver = getNextDriver!(i - 1, StageSeq);
+		enum getNextDriver = getNextDriver!(mode, i + (mode == DriveMode.source ? 1 : -1), StageSeq);
 }
+
+private enum getFirstDriver(DriveMode mode, StageSeq...) =
+	getNextDriver!(mode, (mode == DriveMode.source ? 0 : StageSeq.length - 1), StageSeq);
 
 /**
 Holds the information (both static and dynamic) needed to create a pipeline instance.
@@ -270,7 +290,7 @@ Params:
     Src = Type of schema object describing the previous stages.
     A   = Types of arguments passed to S's instance ctor.
 */
-private struct Schema(S...) {
+private struct Schema(DriveMode mode, S...) {
 	import std.conv : to;
 	alias StageSpecSeq = S;
 	alias getStage(Z) = Z.Stage;
@@ -279,11 +299,18 @@ private struct Schema(S...) {
 	alias LastStage = StageSeq[$ - 1];
 
 	enum size_t length = S.length;
+	enum driveMode = mode;
 
 	static if (is(Traits!LastStage.SourceElementType W))
 		alias ElementType = W;
 
 	StageSpecSeq stages;
+
+	version(unittest) {
+		auto drive(DriveMode mode)() {
+			return Schema!(mode, StageSpecSeq)(stages);
+		}
+	}
 
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
@@ -296,7 +323,7 @@ private struct Schema(S...) {
 
 		static if (areCompatible!(LastStage, NextStage)) {
 			alias T = StageSpec!(NextStage, NextArgs);
-			auto result = Schema!(StageSpecSeq, T)(stages, T(nextArgs));
+			auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
 			static if (isSource!NextStage || isSink!FirstStage)
 				return result;
 			else
@@ -313,8 +340,6 @@ private struct Schema(S...) {
 	{
 		static if (i < StageSeq.length) {
 			constructInPlace(pipeline.tup[i], stages[i].args);
-			static if (isPassiveSink!(StageSeq[i]) && isPassiveSource!(StageSeq[i]))
-				pipeline.tup[i].spawn();
 			construct!(i + 1)(pipeline);
 		}
 	}
@@ -361,7 +386,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else {
 		alias T = StageSpec!(Stage, Args);
-		return Schema!T(T(args));
+		return Schema!(DriveMode.sink, T)(T(args));
 	}
 }
 
@@ -380,7 +405,7 @@ struct Pipeline(S)
 		alias Stage = Schema.StageSeq[i];
 		alias StageType = Stage!(Context, Pipeline,
 			(isPassiveSink!Stage && isPassiveSource!Stage) ? Yes.passiveFilter : No.passiveFilter,
-			i, getNextDriver!(i, Schema.StageSeq));
+			i, getNextDriver!(Schema.driveMode, i, Schema.StageSeq));
 	}
 
 	template StageTypeTuple(size_t i) {
@@ -410,10 +435,30 @@ struct Pipeline(S)
 		size_t pull()(Schema.ElementType[] buf) { return tup[$ - 1].pull(buf); }
 	} else {
 		// TODO: sink pipelines.
+
+		// Spawns secondary drivers, if any.
+		private void spawn(size_t i = 0)()
+		{
+			static if (isPassiveSink!(Schema.StageSeq[i]) && isPassiveSource!(Schema.StageSeq[i]))
+				tup[i].spawn();
+			static if (i + 1 < Schema.StageSeq.length)
+				spawn!(i + 1)();
+		}
+
+		// Calls all secondary drivers for the last time to make sure they have completed.
+		private void stop(size_t i = 0)()
+		{
+			static if (isPassiveSink!(Schema.StageSeq[i]) && isPassiveSource!(Schema.StageSeq[i]))
+				tup[i].stop();
+			static if (i + 1 < Schema.StageSeq.length)
+				stop!(i + 1)();
+		}
+
 		void run()()
 		{
-			enum driverIndex = Schema.StageSeq.length - 1;
-			tup[getNextDriver!(driverIndex, Schema.StageSeq)].run();
+			spawn();
+			tup[getFirstDriver!(Schema.driveMode, Schema.StageSeq)].run();
+			stop();
 		}
 	}
 }
@@ -974,7 +1019,7 @@ version(unittest) {
 		return "pipe!Test" ~ cf ~ suf ~ "(Arg!Test" ~ cf ~ suf ~ "())";
 	}
 
-	string genChain(string filterList)
+	string genChain(DriveMode mode, string filterList)
 	{
 		import std.algorithm : map;
 		import std.array : join, split;
@@ -983,15 +1028,17 @@ version(unittest) {
 		if (filters.length > 2)
 			midstr = filters[1 .. $ - 1].map!(f => "." ~ genStage(f, "Filter")).join;
 		return genStage(filters[0], "Source")
+			~ ".drive!(DriveMode.s" ~ (mode == DriveMode.source ? "ource" : "ink") ~ ")"
 			~ midstr
 			~ "." ~ genStage(filters[$ - 1], "Sink") ~ ";";
 	}
 
-	void testChain(string filterlist, R)(R r)
+	void testChain(DriveMode mode, string filterlist, R)(R r)
 		if (isInputRange!R && is(ElementType!R : ulong))
 	{
 		auto input = r.map!(a => ulong(a)).array();
-		logf("Testing %s with %d elements", filterlist, input.length);
+		logf("Testing %s-driven %s with %d elements",
+			mode == DriveMode.source ? "source" : "sink", filterlist, input.length);
 		auto expectedOutput = input.dup;
 		auto filters = filterlist.split(",");
 		if (filters.length > 2) {
@@ -1007,7 +1054,7 @@ version(unittest) {
 			outputArray[] = 0xbadc0ffee0ddf00d;
 			inputArray = input;
 			outputIndex = 0;
-			mixin(genChain(filterlist));
+			mixin(genChain(mode, filterlist));
 			auto len = min(outputIndex, expectedLength, input.length);
 			uint left = 8;
 			size_t all = 0;
@@ -1025,7 +1072,7 @@ version(unittest) {
 				}
 			}
 			if (all > 0) {
-				logf("%s", genChain(filterlist));
+				logf("%s", genChain(mode, filterlist));
 				logf("total: %d differences", all);
 			}
 			assert(all == 0);
@@ -1035,7 +1082,8 @@ version(unittest) {
 	void testChain(string filterlist)()
 	{
 		import std.range : iota;
-		testChain!filterlist(iota(0, 173447));
+		testChain!(DriveMode.sink, filterlist)(iota(0, 173447));
+		testChain!(DriveMode.source, filterlist)(iota(0, 173447));
 	}
 
 }
