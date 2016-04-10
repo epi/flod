@@ -301,7 +301,7 @@ private struct Schema(DriveMode mode, S...) {
 	enum size_t length = S.length;
 	enum driveMode = mode;
 
-	static if (is(Traits!LastStage.SourceElementType W))
+	static if (is(SourceElementType!LastStage W))
 		alias ElementType = W;
 
 	StageSpecSeq stages;
@@ -315,8 +315,9 @@ private struct Schema(DriveMode mode, S...) {
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
-		alias SourceE = Traits!LastStage.SourceElementType;
-		alias SinkE = Traits!NextStage.SinkElementType;
+		alias SourceE = ElementType;
+		alias SinkE = SinkElementType!NextStage;
+
 		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
 			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
 			.str!NextStage ~ " expects " ~ SinkE.stringof);
