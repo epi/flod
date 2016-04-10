@@ -10,7 +10,7 @@ import flod.pipeline;
 import flod.traits;
 
 private template DefaultPullPeekAdapter(Buffer, E) {
-	@pullSink!E @peekSource!E
+	@filter!(E, E)(Method.pull, Method.peek)
 	struct DefaultPullPeekAdapter(alias Context, A...) {
 		mixin Context!A;
 		Buffer buffer;
@@ -46,15 +46,15 @@ auto pullPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 }
 
 ///
-auto pullPeek(S)(auto ref S pipeline)
+auto pullPeek(S)(auto ref S schema)
 	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
-	return pipeline.pullPeek(movingBuffer());
+	return schema.pullPeek(movingBuffer());
 }
 
 private template DefaultPeekPullAdapter(E) {
-	@peekSink!E @pullSource!E
+	@filter!(E, E)(Method.peek, Method.pull)
 	struct DefaultPeekPullAdapter(alias Context, A...) {
 		mixin Context!A;
 
@@ -78,7 +78,7 @@ auto peekPull(S)(auto ref S schema)
 }
 
 private template DefaultPullPushAdapter(E) {
-	@pullSink!E @pushSource!E
+	@filter!(E, E)(Method.pull, Method.push)
 	struct DefaultPullPushAdapter(alias Context, A...) {
 		mixin Context!A;
 		size_t chunkSize;
@@ -111,7 +111,7 @@ auto pullPush(S)(auto ref S schema, size_t chunkSize = 4096)
 }
 
 private template DefaultPullAllocAdapter(E) {
-	@pullSink!E @allocSource!E
+	@filter!(E, E)(Method.pull, Method.alloc)
 	struct DefaultPullAllocAdapter(alias Context, A...) {
 		mixin Context!A;
 		size_t chunkSize;
@@ -147,7 +147,7 @@ auto pullAlloc(S)(auto ref S schema, size_t chunkSize = 4096)
 }
 
 private template DefaultPeekPushAdapter(E) {
-	@peekSink!E @pushSource!E
+	@filter!(E, E)(Method.peek, Method.push)
 	struct DefaultPeekPushAdapter(alias Context, A...) {
 		mixin Context!A;
 		size_t minSliceSize;
@@ -181,7 +181,7 @@ auto peekPush(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof)
 }
 
 private template DefaultPeekAllocAdapter(E) {
-	@peekSink!E @allocSource!E
+	@filter!(E, E)(Method.peek, Method.alloc)
 	struct DefaultPeekAllocAdapter(alias Context, A...) {
 		mixin Context!A;
 		size_t minSliceSize;
@@ -223,7 +223,7 @@ auto peekAlloc(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof, size_t
 }
 
 private template DefaultPushAllocAdapter(E) {
-	@pushSink!E @allocSource!E
+	@filter!(E, E)(Method.push, Method.alloc)
 	struct DefaultPushAllocAdapter(alias Context, A...) {
 		mixin Context!A;
 
@@ -250,7 +250,7 @@ auto pushAlloc(S)(auto ref S schema)
 }
 
 private template DefaultPushPullAdapter(Buffer, E) {
-	@pushSink!E @pullSource!E
+	@filter!(E, E)(Method.push, Method.pull)
 	struct DefaultPushPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
@@ -375,7 +375,7 @@ private template ImplementAllocCommit(E) {
 }
 
 private template DefaultPushPeekAdapter(Buffer, E) {
-	@pushSink!E @peekSource!E
+	@filter!(E, E)(Method.push, Method.peek)
 	struct DefaultPushPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
@@ -422,7 +422,7 @@ auto pushPeek(S)(auto ref S schema)
 }
 
 private template DefaultAllocPeekAdapter(Buffer, E) {
-	@allocSink!E @peekSource!E
+	@filter!(E, E)(Method.alloc, Method.peek)
 	struct DefaultAllocPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
@@ -456,7 +456,7 @@ auto allocPeek(S)(auto ref S schema)
 }
 
 private template DefaultAllocPullAdapter(Buffer, E) {
-	@allocSink!E @pullSource!E
+	@filter!(E, E)(Method.alloc, Method.pull)
 	struct DefaultAllocPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
@@ -505,7 +505,7 @@ auto allocPull(S)(auto ref S schema)
 }
 
 private template DefaultAllocPushAdapter(Buffer, E) {
-	@allocSink!E @pushSource!E
+	@filter!(E, E)(Method.alloc, Method.push)
 	struct DefaultAllocPushAdapter(alias Context, A...) {
 		mixin Context!A;
 		Buffer buffer;
