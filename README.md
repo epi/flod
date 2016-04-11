@@ -72,7 +72,7 @@ To see what can be done with *flod*, see the examples found in
   - Can use output ranges as pipeline sinks.
 
 - v0.0.1 (2016-03-13)
-  - Fisrt release – can connect pipes with any interfaces (even incompatible).
+  - First release – can connect pipes with any interfaces (even incompatible).
 
 ## License
 
