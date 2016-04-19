@@ -200,12 +200,16 @@ struct FiberSwitch {
 	}
 }
 
-private mixin template Context(PL, Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
+private mixin template Context(PL, InputE, OutputE,
+	Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
 	size_t index, size_t driverIndex)
 {
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }
+
+	alias InputElementType = InputE;
+	alias OutputElementType = OutputE;
 
 	static if (passiveFilter) {
 		FiberSwitch _flod_switch;
@@ -261,6 +265,14 @@ private struct StageSpec(alias S, A...) {
 	Args args;
 }
 
+// Used to catch StageSpec from a stage factory function.
+private static struct FakeSchema {
+	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs args)
+	{
+		return StageSpec!(NextStage, NextArgs)(args);
+	}
+}
+
 /**
 Determines which driver drives the entire pipeline in pipelines with multiple drivers.
 */
@@ -285,6 +297,27 @@ private template getNextDriver(DriveMode mode, size_t i, StageSeq...) {
 private enum getFirstDriver(DriveMode mode, StageSeq...) =
 	getNextDriver!(mode, (mode == DriveMode.source ? 0 : StageSeq.length - 1), StageSeq);
 
+private static struct AdapterInsertionInfo {
+	size_t index;
+	string name;
+}
+
+// Used in CT to build list of adapters that need to be inserted according to the specified methods.
+private static AdapterInsertionInfo[] buildListOfAdapters(const(MethodAttribute)[] methods)
+{
+	import std.string : capitalize;
+	string[Method.max + 1] methodNames = [
+		Method.pull : "pull", Method.peek : "peek",
+		Method.push : "push", Method.alloc : "alloc" ];
+	AdapterInsertionInfo[] result;
+	foreach (i; 0 .. methods.length - 1) {
+		if (methods[i].sourceMethod != methods[i + 1].sinkMethod)
+			result ~= AdapterInsertionInfo(i + 1,
+				methodNames[methods[i].sourceMethod] ~ methodNames[methods[i + 1].sinkMethod].capitalize);
+	}
+	return result;
+}
+
 /**
 Holds the information (both static and dynamic) needed to create a pipeline instance.
 
@@ -308,8 +341,7 @@ private struct Schema(DriveMode mode, S...) {
 	enum size_t length = S.length;
 	enum driveMode = mode;
 
-	static if (is(SourceElementType!LastStage W))
-		alias ElementType = W;
+	alias ElementType = SourceElementType!(length - 1, StageSeq);
 
 	StageSpecSeq stages;
 
@@ -322,29 +354,20 @@ private struct Schema(DriveMode mode, S...) {
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
-		alias SourceE = ElementType;
-		alias SinkE = SinkElementType!NextStage;
-
-		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
-			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
-			.str!NextStage ~ " expects " ~ SinkE.stringof);
-
-		static if (areCompatible!(LastStage, NextStage)) {
-			alias T = StageSpec!(NextStage, NextArgs);
-			auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
-			static if (isSource!NextStage || isSink!FirstStage)
-				return result;
-			else
-				result.run();
-		} else {
-			import std.string : capitalize;
-			import flod.adapter;
-			enum adapterName = Traits!LastStage.sourceMethodStr ~ Traits!NextStage.sinkMethodStr.capitalize();
-			mixin(`return this.` ~ adapterName ~ `.pipe!NextStage(nextArgs);`);
-		}
+		alias T = StageSpec!(NextStage, NextArgs);
+		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
+		static if (isSource!NextStage || isSink!FirstStage)
+			return result;
+		else
+			result.run();
 	}
 
-	auto construct(size_t i = 0)(ref Pipeline!Schema pipeline)
+	void run()()
+	{
+		create().run();
+	}
+
+	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
 	{
 		static if (i < StageSeq.length) {
 			constructInPlace(pipeline.tup[i], stages[i].args);
@@ -352,22 +375,37 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	static if (!isSink!FirstStage && !isSource!LastStage) {
-		void run()()
-		{
-			Pipeline!Schema p;
-			construct(p);
-			p.run();
+	private auto insertAdapters(const(AdapterInsertionInfo)[] info)()
+	{
+		static if (info.length == 0) {
+			return this;
+		} else {
+			import flod.adapter;
+			enum lastAdapter = info[$ - 1];
+			mixin(`auto spec = FakeSchema().` ~ lastAdapter.name ~ `;`);
+			alias T = Schema!(driveMode, S[0 .. lastAdapter.index], typeof(spec), S[lastAdapter.index .. $]);
+			auto schema = T(stages[0 .. lastAdapter.index], spec, stages[lastAdapter.index .. $]);
+			static if (info.length == 1)
+				return schema;
+			else
+				return schema.insertAdapters!(info[0 .. $ - 1]);
 		}
 	}
 
-	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
-		auto create()()
-		{
-			Pipeline!Schema p;
-			construct(p);
-			return p;
-		}
+	private auto doCreate()()
+	{
+		Pipeline!(driveMode, StageSeq) p;
+		construct(p);
+		return p;
+	}
+
+	auto create()()
+	{
+		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
+		static if (adapters.length == 0)
+			return doCreate();
+		else
+			return insertAdapters!adapters().doCreate();
 	}
 }
 
@@ -382,7 +420,8 @@ enum isSchema(P) =
 	   isDynamicArray!P || testSchema!(P, isPeekSource)
 	|| isInputRange!P || testSchema!(P, isPullSource)
 	|| testSchema!(P, isPushSource)
-	|| testSchema!(P, isAllocSource);
+	|| testSchema!(P, isAllocSource)
+	|| is(P == FakeSchema);
 
 ///
 auto pipe(alias Stage, Args...)(auto ref Args args)
@@ -405,26 +444,28 @@ auto pipe(E, alias Dg)()
 }
 
 /// A pipeline built based on schema S.
-struct Pipeline(S)
-{
-	alias Schema = S;
+struct Pipeline(DriveMode mode, S...) {
+	enum driveMode = mode;
+	alias StageSeq = S;
+	alias LastStage = StageSeq[$ - 1];
 
 	template StageType(size_t i) {
-		alias Stage = Schema.StageSeq[i];
+		alias Stage = StageSeq[i];
 		alias StageType = Stage!(Context, Pipeline,
+			SinkElementType!(i, StageSeq), SourceElementType!(i, StageSeq),
 			(isPassiveSink!Stage && isPassiveSource!Stage) ? Yes.passiveFilter : No.passiveFilter,
-			i, getNextDriver!(Schema.driveMode, i, Schema.StageSeq));
+			i, getNextDriver!(driveMode, i, StageSeq));
 	}
 
 	template StageTypeTuple(size_t i) {
-		static if (i >= Schema.length)
+		static if (i >= StageSeq.length)
 			alias Tuple = AliasSeq!();
 		else {
 			alias Tuple = AliasSeq!(StageType!i, StageTypeTuple!(i + 1).Tuple);
 		}
 	}
 
-	alias TagSpecs = FilterTagAttributes!(0, Schema.StageSeq);
+	alias TagSpecs = FilterTagAttributes!(0, StageSeq);
 	alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
@@ -436,36 +477,40 @@ struct Pipeline(S)
 		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
 	}
 
-	static if (isPeekSource!(Schema.LastStage)) {
-		const(Schema.ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
+	static if (isPeekSource!(LastStage)) {
+		alias ElementType = SourceElementType!LastStage;
+		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
 		void consume()(size_t n) { tup[$ - 1].consume(n); }
-	} else static if (isPullSource!(Schema.LastStage)) {
-		size_t pull()(Schema.ElementType[] buf) { return tup[$ - 1].pull(buf); }
+	} else static if (isPullSource!(LastStage)) {
+		alias ElementType = SourceElementType!LastStage;
+		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
 	} else {
 		// TODO: sink pipelines.
 
 		// Spawns secondary drivers, if any.
 		private void spawn(size_t i = 0)()
 		{
-			static if (isPassiveSink!(Schema.StageSeq[i]) && isPassiveSource!(Schema.StageSeq[i]))
+			static if (isPassiveSink!(StageSeq[i]) && isPassiveSource!(StageSeq[i]))
 				tup[i].spawn();
-			static if (i + 1 < Schema.StageSeq.length)
+			static if (i + 1 < StageSeq.length)
 				spawn!(i + 1)();
 		}
 
 		// Calls all secondary drivers for the last time to make sure they have completed.
 		private void stop(size_t i = 0)()
 		{
-			static if (isPassiveSink!(Schema.StageSeq[i]) && isPassiveSource!(Schema.StageSeq[i]))
+			static if (isPassiveSink!(StageSeq[i]) && isPassiveSource!(StageSeq[i]))
 				tup[i].stop();
-			static if (i + 1 < Schema.StageSeq.length)
+			static if (i + 1 < StageSeq.length)
 				stop!(i + 1)();
 		}
 
 		void run()()
 		{
 			spawn();
-			tup[getFirstDriver!(Schema.driveMode, Schema.StageSeq)].run();
+			enum driver = getFirstDriver!(driveMode, StageSeq);
+			static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
+			tup[driver].run();
 			stop();
 		}
 	}

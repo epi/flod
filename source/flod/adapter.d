@@ -9,11 +9,14 @@ module flod.adapter;
 import flod.pipeline;
 import flod.traits;
 
-private template DefaultPullPeekAdapter(Buffer, E) {
-	@filter!(E, E)(Method.pull, Method.peek)
+private template DefaultPullPeekAdapter(Buffer) {
+	@filter(Method.pull, Method.peek)
 	struct DefaultPullPeekAdapter(alias Context, A...) {
 		mixin Context!A;
-		Buffer buffer;
+		private Buffer buffer;
+
+		static assert(is(InputElementType == OutputElementType));
+		private alias E = InputElementType;
 
 		this()(auto ref Buffer buffer)
 		{
@@ -42,7 +45,7 @@ private template DefaultPullPeekAdapter(Buffer, E) {
 auto pullPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPullPeekAdapter!(Buffer, S.ElementType))(buffer);
+	return schema.pipe!(DefaultPullPeekAdapter!Buffer)(buffer);
 }
 
 ///
@@ -53,20 +56,21 @@ auto pullPeek(S)(auto ref S schema)
 	return schema.pullPeek(movingBuffer());
 }
 
-private template DefaultPeekPullAdapter(E) {
-	@filter!(E, E)(Method.peek, Method.pull)
-	struct DefaultPeekPullAdapter(alias Context, A...) {
-		mixin Context!A;
+@filter(Method.peek, Method.pull)
+struct DefaultPeekPullAdapter(alias Context, A...) {
+	mixin Context!A;
 
-		size_t pull(E[] buf)
-		{
-			import std.algorithm : min;
-			auto inbuf = source.peek(buf.length);
-			auto l = min(buf.length, inbuf.length);
-			buf[0 .. l] = inbuf[0 .. l];
-			source.consume(l);
-			return l;
-		}
+	static assert(is(InputElementType == OutputElementType));
+	private alias E = InputElementType;
+
+	size_t pull(E[] buf)
+	{
+		import std.algorithm : min;
+		auto inbuf = source.peek(buf.length);
+		auto l = min(buf.length, inbuf.length);
+		buf[0 .. l] = inbuf[0 .. l];
+		source.consume(l);
+		return l;
 	}
 }
 
@@ -74,31 +78,32 @@ private template DefaultPeekPullAdapter(E) {
 auto peekPull(S)(auto ref S schema)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPeekPullAdapter!(S.ElementType));
+	return schema.pipe!DefaultPeekPullAdapter;
 }
 
-private template DefaultPullPushAdapter(E) {
-	@filter!(E, E)(Method.pull, Method.push)
-	struct DefaultPullPushAdapter(alias Context, A...) {
-		mixin Context!A;
-		size_t chunkSize;
+@filter(Method.pull, Method.push)
+struct DefaultPullPushAdapter(alias Context, A...) {
+	mixin Context!A;
+	size_t chunkSize;
 
-		this(size_t chunkSize)
-		{
-			this.chunkSize = chunkSize;
-		}
+	static assert(is(InputElementType == OutputElementType));
+	private alias E = InputElementType;
 
-		void run()()
-		{
-			import core.stdc.stdlib : alloca;
-			auto buf = (cast(E*) alloca(E.sizeof * chunkSize))[0 .. chunkSize];
-			for (;;) {
-				size_t inp = source.pull(buf[]);
-				if (inp == 0)
-					break;
-				if (sink.push(buf[0 .. inp]) < chunkSize)
-					break;
-			}
+	this(size_t chunkSize)
+	{
+		this.chunkSize = chunkSize;
+	}
+
+	void run()()
+	{
+		import core.stdc.stdlib : alloca;
+		auto buf = (cast(E*) alloca(E.sizeof * chunkSize))[0 .. chunkSize];
+		for (;;) {
+			size_t inp = source.pull(buf[]);
+			if (inp == 0)
+				break;
+			if (sink.push(buf[0 .. inp]) < chunkSize)
+				break;
 		}
 	}
 }
@@ -107,34 +112,35 @@ private template DefaultPullPushAdapter(E) {
 auto pullPush(S)(auto ref S schema, size_t chunkSize = 4096)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPullPushAdapter!(S.ElementType))(chunkSize);
+	return schema.pipe!DefaultPullPushAdapter(chunkSize);
 }
 
-private template DefaultPullAllocAdapter(E) {
-	@filter!(E, E)(Method.pull, Method.alloc)
-	struct DefaultPullAllocAdapter(alias Context, A...) {
-		mixin Context!A;
-		size_t chunkSize;
+@filter(Method.pull, Method.alloc)
+struct DefaultPullAllocAdapter(alias Context, A...) {
+	mixin Context!A;
+	private size_t chunkSize;
 
-		this(size_t chunkSize)
-		{
-			this.chunkSize = chunkSize;
-		}
+	static assert(is(InputElementType == OutputElementType));
+	private alias E = InputElementType;
 
-		void run()()
-		{
-			E[] buf;
-			for (;;) {
-				if (!sink.alloc(buf, chunkSize)) {
-					import core.exception : OutOfMemoryError;
-					throw new OutOfMemoryError;
-				}
-				size_t inp = source.pull(buf[]);
-				if (inp == 0)
-					break;
-				if (sink.commit(inp) < chunkSize)
-					break;
+	this(size_t chunkSize)
+	{
+		this.chunkSize = chunkSize;
+	}
+
+	void run()()
+	{
+		E[] buf;
+		for (;;) {
+			if (!sink.alloc(buf, chunkSize)) {
+				import core.exception : OutOfMemoryError;
+				throw new OutOfMemoryError;
 			}
+			size_t inp = source.pull(buf[]);
+			if (inp == 0)
+				break;
+			if (sink.commit(inp) < chunkSize)
+				break;
 		}
 	}
 }
@@ -143,32 +149,33 @@ private template DefaultPullAllocAdapter(E) {
 auto pullAlloc(S)(auto ref S schema, size_t chunkSize = 4096)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPullAllocAdapter!(S.ElementType))(chunkSize);
+	return schema.pipe!DefaultPullAllocAdapter(chunkSize);
 }
 
-private template DefaultPeekPushAdapter(E) {
-	@filter!(E, E)(Method.peek, Method.push)
-	struct DefaultPeekPushAdapter(alias Context, A...) {
-		mixin Context!A;
-		size_t minSliceSize;
+@filter(Method.peek, Method.push)
+struct DefaultPeekPushAdapter(alias Context, A...) {
+	mixin Context!A;
+	private size_t minSliceSize;
 
-		this(size_t minSliceSize)
-		{
-			this.minSliceSize = minSliceSize;
-		}
+	static assert(is(InputElementType == OutputElementType));
+	private alias E = InputElementType;
 
-		void run()()
-		{
-			for (;;) {
-				auto buf = source.peek(minSliceSize);
-				if (buf.length == 0)
-					break;
-				size_t w = sink.push(buf[]);
-				if (w < minSliceSize)
-					break;
-				assert(w <= buf.length);
-				source.consume(w);
-			}
+	this(size_t minSliceSize)
+	{
+		this.minSliceSize = minSliceSize;
+	}
+
+	void run()()
+	{
+		for (;;) {
+			auto buf = source.peek(minSliceSize);
+			if (buf.length == 0)
+				break;
+			size_t w = sink.push(buf[]);
+			if (w < minSliceSize)
+				break;
+			assert(w <= buf.length);
+			source.consume(w);
 		}
 	}
 }
@@ -177,40 +184,44 @@ private template DefaultPeekPushAdapter(E) {
 auto peekPush(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPeekPushAdapter!(S.ElementType))(minSliceSize);
+	return schema.pipe!DefaultPeekPushAdapter(minSliceSize);
 }
 
-private template DefaultPeekAllocAdapter(E) {
-	@filter!(E, E)(Method.peek, Method.alloc)
-	struct DefaultPeekAllocAdapter(alias Context, A...) {
-		mixin Context!A;
+@filter(Method.peek, Method.alloc)
+struct DefaultPeekAllocAdapter(alias Context, A...) {
+	mixin Context!A;
+
+	private {
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
+
 		size_t minSliceSize;
 		size_t maxSliceSize;
+	}
 
-		this(size_t minSliceSize, size_t maxSliceSize)
-		{
-			this.minSliceSize = minSliceSize;
-			this.maxSliceSize = maxSliceSize;
-		}
+	this(size_t minSliceSize, size_t maxSliceSize)
+	{
+		this.minSliceSize = minSliceSize;
+		this.maxSliceSize = maxSliceSize;
+	}
 
-		void run()()
-		{
-			E[] ob;
-			for (;;) {
-				auto ib = source.peek(minSliceSize);
-				if (ib.length == 0)
-					break;
-				auto len = min(ib.length, maxSliceSize);
-				if (!sink.alloc(ob, len)) {
-					import core.exception : OutOfMemoryError;
-					throw new OutOfMemoryError();
-				}
-				ob[0 .. len] = ib[0 .. len];
-				size_t w = sink.commit(len);
-				source.consume(w);
-				if (w < minSliceSize)
-					break;
+	void run()()
+	{
+		E[] ob;
+		for (;;) {
+			auto ib = source.peek(minSliceSize);
+			if (ib.length == 0)
+				break;
+			auto len = min(ib.length, maxSliceSize);
+			if (!sink.alloc(ob, len)) {
+				import core.exception : OutOfMemoryError;
+				throw new OutOfMemoryError();
 			}
+			ob[0 .. len] = ib[0 .. len];
+			size_t w = sink.commit(len);
+			source.consume(w);
+			if (w < minSliceSize)
+				break;
 		}
 	}
 }
@@ -219,24 +230,25 @@ private template DefaultPeekAllocAdapter(E) {
 auto peekAlloc(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPeekAllocAdapter!(S.ElementType))(minSliceSize, maxSliceSize);
+	return schema.pipe!DefaultPeekAllocAdapter(minSliceSize, maxSliceSize);
 }
 
-private template DefaultPushAllocAdapter(E) {
-	@filter!(E, E)(Method.push, Method.alloc)
-	struct DefaultPushAllocAdapter(alias Context, A...) {
-		mixin Context!A;
+@filter(Method.push, Method.alloc)
+struct DefaultPushAllocAdapter(alias Context, A...) {
+	mixin Context!A;
 
-		size_t push(const(E)[] buf)
-		{
-			E[] ob;
-			if (!sink.alloc(ob, buf.length)) {
-				import core.exception : OutOfMemoryError;
-				throw new OutOfMemoryError();
-			}
-			ob[0 .. buf.length] = buf[];
-			return sink.commit(buf.length);
+	static assert(is(InputElementType == OutputElementType));
+	private alias E = InputElementType;
+
+	size_t push(const(E)[] buf)
+	{
+		E[] ob;
+		if (!sink.alloc(ob, buf.length)) {
+			import core.exception : OutOfMemoryError;
+			throw new OutOfMemoryError();
 		}
+		ob[0 .. buf.length] = buf[];
+		return sink.commit(buf.length);
 	}
 }
 
@@ -244,19 +256,22 @@ private template DefaultPushAllocAdapter(E) {
 auto pushAlloc(S)(auto ref S schema)
 	if (isSchema!S)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultPushAllocAdapter!(E);
-	return schema.pipe!PP();
+	return schema.pipe!DefaultPushAllocAdapter();
 }
 
-private template DefaultPushPullAdapter(Buffer, E) {
-	@filter!(E, E)(Method.push, Method.pull)
+private template DefaultPushPullAdapter(Buffer) {
+	@filter(Method.push, Method.pull)
 	struct DefaultPushPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
 
-		Buffer buffer;
-		const(E)[] pushed;
+		private {
+			static assert(is(InputElementType == OutputElementType));
+			alias E = InputElementType;
+
+			Buffer buffer;
+			const(E)[] pushed;
+		}
 
 		this()(auto ref Buffer buffer)
 		{
@@ -324,9 +339,7 @@ private template DefaultPushPullAdapter(Buffer, E) {
 ///
 auto pushPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultPushPullAdapter!(Buffer, E);
-	return schema.pipe!PP(buffer);
+	return schema.pipe!(DefaultPushPullAdapter!Buffer)(buffer);
 }
 
 ///
@@ -374,12 +387,18 @@ private template ImplementAllocCommit(E) {
 	}
 }
 
-private template DefaultPushPeekAdapter(Buffer, E) {
-	@filter!(E, E)(Method.push, Method.peek)
+private template DefaultPushPeekAdapter(Buffer) {
+	@filter(Method.push, Method.peek)
 	struct DefaultPushPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
-		Buffer buffer;
+
+		private {
+			static assert(is(InputElementType == OutputElementType));
+			alias E = InputElementType;
+
+			Buffer buffer;
+		}
 
 		this()(auto ref Buffer buffer)
 		{
@@ -409,9 +428,7 @@ private template DefaultPushPeekAdapter(Buffer, E) {
 ///
 auto pushPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultPushPeekAdapter!(Buffer, E);
-	return schema.pipe!PP(buffer);
+	return schema.pipe!(DefaultPushPeekAdapter!Buffer)(buffer);
 }
 
 ///
@@ -421,12 +438,18 @@ auto pushPeek(S)(auto ref S schema)
 	return schema.pushPeek(movingBuffer());
 }
 
-private template DefaultAllocPeekAdapter(Buffer, E) {
-	@filter!(E, E)(Method.alloc, Method.peek)
+private template DefaultAllocPeekAdapter(Buffer) {
+	@filter(Method.alloc, Method.peek)
 	struct DefaultAllocPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
-		Buffer buffer;
+
+		private {
+			static assert(is(InputElementType == OutputElementType));
+			alias E = InputElementType;
+
+			Buffer buffer;
+		}
 
 		this()(auto ref Buffer buffer)
 		{
@@ -442,9 +465,7 @@ private template DefaultAllocPeekAdapter(Buffer, E) {
 auto allocPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultAllocPeekAdapter!(Buffer, E);
-	return schema.pipe!PP(buffer);
+	return schema.pipe!(DefaultAllocPeekAdapter!Buffer)(buffer);
 }
 
 ///
@@ -455,12 +476,18 @@ auto allocPeek(S)(auto ref S schema)
 	return schema.allocPeek(movingBuffer());
 }
 
-private template DefaultAllocPullAdapter(Buffer, E) {
-	@filter!(E, E)(Method.alloc, Method.pull)
+private template DefaultAllocPullAdapter(Buffer) {
+	@filter(Method.alloc, Method.pull)
 	struct DefaultAllocPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
-		Buffer buffer;
+
+		private {
+			static assert(is(InputElementType == OutputElementType));
+			alias E = InputElementType;
+
+			Buffer buffer;
+		}
 
 		this()(auto ref Buffer buffer)
 		{
@@ -491,9 +518,7 @@ private template DefaultAllocPullAdapter(Buffer, E) {
 auto allocPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultAllocPullAdapter!(Buffer, E);
-	return schema.pipe!PP(buffer);
+	return schema.pipe!(DefaultAllocPullAdapter!Buffer)(buffer);
 }
 
 ///
@@ -504,11 +529,16 @@ auto allocPull(S)(auto ref S schema)
 	return schema.allocPull(movingBuffer());
 }
 
-private template DefaultAllocPushAdapter(Buffer, E) {
-	@filter!(E, E)(Method.alloc, Method.push)
+private template DefaultAllocPushAdapter(Buffer) {
+	@filter(Method.alloc, Method.push)
 	struct DefaultAllocPushAdapter(alias Context, A...) {
 		mixin Context!A;
-		Buffer buffer;
+		private {
+			static assert(is(InputElementType == OutputElementType));
+			alias E = InputElementType;
+
+			Buffer buffer;
+		}
 
 		this()(auto ref Buffer buffer)
 		{
@@ -537,9 +567,7 @@ private template DefaultAllocPushAdapter(Buffer, E) {
 auto allocPush(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
-	alias E = S.ElementType;
-	alias PP = DefaultAllocPushAdapter!(Buffer, E);
-	return schema.pipe!PP(buffer);
+	return schema.pipe!(DefaultAllocPushAdapter!Buffer)(buffer);
 }
 
 ///
