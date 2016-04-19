@@ -12,7 +12,7 @@ import flod.pipeline : pipe, isSchema;
 import flod.traits;
 
 private template ArraySource(E) {
-	@peekSource!E
+	@source!E(Method.peek)
 	struct ArraySource(alias Context, A...) {
 		mixin Context!A;
 		private const(E)[] array;
@@ -48,7 +48,7 @@ private template RangeSource(R) {
 	import std.range : ElementType;
 	alias E = ElementType!R;
 
-	@pullSource!E
+	@source!E(Method.pull)
 	struct RangeSource(alias Context, A...) {
 		mixin Context!A;
 		private R range;
@@ -118,11 +118,14 @@ unittest {
 	assert(pl.pull(new int[1234567]) == 99);
 }
 
-private template RangeSink(R, E) {
-	@pushSink!E
+private template RangeSink(R) {
+	@sink(Method.push)
 	static struct RangeSink(alias Context, A...) {
 		mixin Context!A;
 		private R range;
+
+		alias E = InputElementType;
+		static assert(isOutputRange!(R, E));
 
 		this()(R range) { this.range = range; }
 
@@ -138,8 +141,7 @@ private template RangeSink(R, E) {
 public auto copy(S, R)(auto ref S schema, R outputRange)
 	if (isSchema!S && isOutputRange!(R, S.ElementType))
 {
-	alias E = S.ElementType;
-	return schema.pipe!(RangeSink!(R, E))(outputRange);
+	return schema.pipe!(RangeSink!R)(outputRange);
 }
 
 unittest {
@@ -152,7 +154,7 @@ unittest {
 }
 
 template DelegateSource(alias fun, E) {
-	@pushSource!E
+	@source!E(Method.push)
 	struct DelegateSource(alias Context, A...) {
 		mixin Context!A;
 
