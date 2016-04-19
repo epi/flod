@@ -26,6 +26,9 @@ on whether they involve e.g. data copying or context switching.
 */
 private MethodAttribute[] chooseOptimalMethods(Flag!`bruteForce` brute_force = No.bruteForce)(MethodAttribute[][] stages)
 {
+	if (stages.length == 1)
+		return [ stages[0][0] ];
+
 	assert(stages.length >= 2);
 
 	// FIXME: these numbers are made up out of thin air, update them based on some benchmarks.
@@ -105,14 +108,17 @@ version(unittest) {
 			"push" : Method.push,
 			"alloc" : Method.alloc ];
 		auto stages = str.split(",");
-		return stages[0].split("/").map!(a => source(tr[a]).methods).array
-			~ stages[1 .. $ - 1].map!(st =>
-				st.split("/")
-					.map!(m => m.split("-"))
-					.map!(m => filter(tr[m[0]], tr[m[1]]).methods)
-					.array
-				).array
-			~ stages[$ - 1].split("/").map!(a => sink(tr[a]).methods).array;
+		auto result = [ stages[0].split("/").map!(a => source(tr[a]).methods).array ];
+		if (stages.length > 1) {
+			result ~= stages[1 .. $ - 1].map!(st =>
+					st.split("/")
+						.map!(m => m.split("-"))
+						.map!(m => filter(tr[m[0]], tr[m[1]]).methods)
+						.array
+					).array
+				~ stages[$ - 1].split("/").map!(a => sink(tr[a]).methods).array;
+		}
+		return result;
 	}
 
 	unittest {
@@ -147,6 +153,7 @@ version(unittest) {
 }
 
 unittest {
+	testOptimizeChain("pull");
 	testOptimizeChain("pull,pull");
 	testOptimizeChain("pull/peek/alloc,push-alloc/alloc-peek,peek-alloc/alloc-peek,push-alloc/alloc-peek/peek-push,push");
 	enum a = testOptimizeChain("pull,peek-pull/alloc-pull,peek");
