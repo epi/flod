@@ -152,6 +152,40 @@ alias SinkElementType(alias S) = getMethodAttributes!S.SinkElementType;
 ///
 alias SourceElementType(alias S) = getMethodAttributes!S.SourceElementType;
 
+/// Gets the element type at source or sink end of i-th stage in `StageSeq`.
+template SourceElementType(size_t i, StageSeq...) {
+	alias E = SourceElementType!(StageSeq[i]);
+	static if (!is(E == void))
+		alias SourceElementType = E;
+	else static if (i == StageSeq.length - 1)
+		alias SourceElementType = SinkElementType!(i, StageSeq);
+	else {
+		alias W = SinkElementType!(StageSeq[i]);
+		static if (!is(W == void))
+			alias SourceElementType = W;
+		else
+			alias SourceElementType = SinkElementType!(i, StageSeq);
+	}
+}
+
+/// ditto
+template SinkElementType(size_t i, StageSeq...) {
+	alias E = SinkElementType!(StageSeq[i]);
+	static if (is(E == void) && i > 0)
+		alias SinkElementType = SourceElementType!(i - 1, StageSeq);
+	else
+		alias SinkElementType = E;
+}
+
+///
+unittest {
+	@source!double(Method.pull) struct Foo {}
+	@filter(Method.pull) struct Bar {}
+	@sink(Method.pull) struct Baz {}
+	static assert(is(SourceElementType!(0, Foo, Baz) == double));
+	static assert(is(SinkElementType!(2, Foo, Bar, Baz) == double));
+}
+
 unittest {
 	struct Foo {}
 	static assert(getMethods!Foo == []);
