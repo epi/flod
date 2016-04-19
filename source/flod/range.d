@@ -15,7 +15,7 @@ private template ArraySource(E) {
 	@peekSource!E
 	struct ArraySource(alias Context, A...) {
 		mixin Context!A;
-		const(E)[] array;
+		private const(E)[] array;
 		this(const(E)* ptr, size_t length)
 		{
 			this.array = ptr[0 .. length];
@@ -51,7 +51,7 @@ private template RangeSource(R) {
 	@pullSource!E
 	struct RangeSource(alias Context, A...) {
 		mixin Context!A;
-		R range;
+		private R range;
 
 		this(bool dummy, R range) { cast(void) dummy; this.range = range; }
 
@@ -122,7 +122,7 @@ private template RangeSink(R, E) {
 	@pushSink!E
 	static struct RangeSink(alias Context, A...) {
 		mixin Context!A;
-		R range;
+		private R range;
 
 		this()(R range) { this.range = range; }
 
