@@ -38,7 +38,7 @@ unittest {
 	@tagSetter!(uint, "foo")
 	@tagSetter!(string, "bar")
 	@tagGetter!(double, "baz", string, "quux")
-	@pushSink!uint
+	@sink!uint(Method.push)
 	static struct Foo {}
 	enum x = getTagAttributes!Foo;
 	static assert(x.length == 4);
@@ -372,7 +372,7 @@ public:
 version(unittest) {
 private:
 	import flod.traits;
-	@pullSource!ubyte
+	@source!ubyte(Method.pull)
 	@tagSetter!(string, "foo", int, "bar")
 	struct TestSource(alias Context, A...) {
 		mixin Context!A;
@@ -384,7 +384,7 @@ private:
 		}
 	}
 
-	@peekSink!ubyte @pullSource!ubyte
+	@filter(Method.peek, Method.pull)
 	@tagGetter!(string, "foo") @tagSetter!(string, "foo")
 	struct TestFilter1(alias Context, A...) {
 		mixin Context!A;
@@ -400,7 +400,7 @@ private:
 		}
 	}
 
-	@pushSink!ubyte
+	@sink!ubyte(Method.push)
 	@tagGetter!(string, "foo", int, "bar")
 	struct TestSink(alias Context, A...) {
 		mixin Context!A;

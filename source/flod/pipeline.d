@@ -574,7 +574,7 @@ version(unittest) {
 		Arg!Stage arg;
 	}
 
-	@pullSource!ulong
+	@source!ulong(Method.pull)
 	struct TestPullSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -588,7 +588,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSource!ulong
+	@source!ulong(Method.peek)
 	struct TestPeekSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -602,7 +602,7 @@ version(unittest) {
 		void consume(size_t n) { inputArray = inputArray[n .. $]; }
 	}
 
-	@pushSource!ulong
+	@source!ulong(Method.push)
 	struct TestPushSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -618,7 +618,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSource!ulong
+	@source!ulong(Method.alloc)
 	struct TestAllocSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -640,7 +640,7 @@ version(unittest) {
 
 	// sinks:
 
-	@pullSink!ulong
+	@sink(Method.pull)
 	struct TestPullSink(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -657,7 +657,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSink!ulong
+	@sink(Method.peek)
 	struct TestPeekSink(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -677,7 +677,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong
+	@sink(Method.push)
 	struct TestPushSink(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -693,7 +693,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong
+	@sink(Method.alloc)
 	struct TestAllocSink(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -726,7 +726,7 @@ version(unittest) {
 
 	// filter
 
-	@peekSink!ulong @peekSource!ulong
+	@filter(Method.peek)
 	struct TestPeekFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -738,7 +738,7 @@ version(unittest) {
 		void consume(size_t n) { source.consume(n); }
 	}
 
-	@peekSink!ulong @pullSource!ulong
+	@filter(Method.peek, Method.pull)
 	struct TestPeekPullFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -753,7 +753,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSink!ulong @pushSource!ulong
+	@filter(Method.peek, Method.push)
 	struct TestPeekPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -770,7 +770,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSink!ulong @allocSource!ulong
+	@filter(Method.peek, Method.alloc)
 	struct TestPeekAllocFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -791,7 +791,7 @@ version(unittest) {
 		}
 	}
 
-	@pullSink!ulong @pullSource!ulong
+	@filter(Method.pull)
 	struct TestPullFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -805,7 +805,7 @@ version(unittest) {
 		}
 	}
 
-	@pullSink!ulong @peekSource!ulong
+	@filter(Method.pull, Method.peek)
 	struct TestPullPeekFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -821,7 +821,7 @@ version(unittest) {
 		void consume(size_t n) {}
 	}
 
-	@pullSink!ulong @pushSource!ulong
+	@filter(Method.pull, Method.push)
 	struct TestPullPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -839,7 +839,7 @@ version(unittest) {
 		}
 	}
 
-	@pullSink!ulong @allocSource!ulong
+	@filter(Method.pull, Method.alloc)
 	struct TestPullAllocFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -859,7 +859,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong @pushSource!ulong
+	@filter(Method.push)
 	struct TestPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -870,7 +870,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong @allocSource!ulong
+	@filter(Method.push, Method.alloc)
 	struct TestPushAllocFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -888,7 +888,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong @pullSource!ulong
+	@filter(Method.push, Method.pull)
 	struct TestPushPullFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -916,7 +916,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong @peekSource!ulong
+	@filter(Method.push, Method.peek)
 	struct TestPushPeekFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -945,7 +945,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @allocSource!ulong
+	@filter(Method.alloc, Method.alloc)
 	struct TestAllocFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -966,7 +966,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @pushSource!ulong
+	@filter(Method.alloc, Method.push)
 	struct TestAllocPushFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -986,7 +986,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @pullSource!ulong
+	@filter(Method.alloc, Method.pull)
 	struct TestAllocPullFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
@@ -1025,7 +1025,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @peekSource!ulong
+	@filter(Method.alloc, Method.peek)
 	struct TestAllocPeekFilter(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
