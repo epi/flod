@@ -85,8 +85,6 @@ private template getMethodAttributes(alias S) {
 			enum sourcem = Method.push;
 		else static if (is(Id!(traits.Source) == Id!AllocSource))
 			enum sourcem = Method.alloc;
-		else
-			enum sourcem = nullMethod;
 		static if (is(Id!(traits.Sink) == Id!PullSink))
 			enum sinkm = Method.pull;
 		else static if (is(Id!(traits.Sink) == Id!PeekSink))
@@ -95,13 +93,16 @@ private template getMethodAttributes(alias S) {
 			enum sinkm = Method.push;
 		else static if (is(Id!(traits.Sink) == Id!AllocSink))
 			enum sinkm = Method.alloc;
-		else
-			enum sinkm = nullMethod;
 	}
-	static if (sinkm != nullMethod || sourcem != nullMethod)
+	static if (is(typeof(sinkm)) || is(typeof(sourcem))) {
+		static if (!is(typeof(sinkm)))
+			enum sinkm = nullMethod;
+		static if (!is(typeof(sourcem)))
+			enum sourcem = nullMethod;
 		deprecated alias deprecatedAttributes =
 			AliasSeq!(filter!(traits.SinkElementType, traits.SourceElementType)(sinkm, sourcem));
-	else
+		pragma(msg, "Deprecated attributes on ", .str!S);
+	} else
 		alias deprecatedAttributes = AliasSeq!();
 
 	alias typed = AliasSeq!(deprecatedAttributes, Filter!(isMethodAttribute, __traits(getAttributes, S)));
