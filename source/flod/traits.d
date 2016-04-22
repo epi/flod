@@ -75,37 +75,7 @@ private template getMethodAttributes(alias S) {
 		}
 	}
 
-	private deprecated {
-		alias traits = Traits!(None, None, void, void, __traits(getAttributes, S));
-		static if (is(Id!(traits.Source) == Id!PullSource))
-			enum sourcem = Method.pull;
-		else static if (is(Id!(traits.Source) == Id!PeekSource))
-			enum sourcem = Method.peek;
-		else static if (is(Id!(traits.Source) == Id!PushSource))
-			enum sourcem = Method.push;
-		else static if (is(Id!(traits.Source) == Id!AllocSource))
-			enum sourcem = Method.alloc;
-		static if (is(Id!(traits.Sink) == Id!PullSink))
-			enum sinkm = Method.pull;
-		else static if (is(Id!(traits.Sink) == Id!PeekSink))
-			enum sinkm = Method.peek;
-		else static if (is(Id!(traits.Sink) == Id!PushSink))
-			enum sinkm = Method.push;
-		else static if (is(Id!(traits.Sink) == Id!AllocSink))
-			enum sinkm = Method.alloc;
-	}
-	static if (is(typeof(sinkm)) || is(typeof(sourcem))) {
-		static if (!is(typeof(sinkm)))
-			enum sinkm = nullMethod;
-		static if (!is(typeof(sourcem)))
-			enum sourcem = nullMethod;
-		deprecated alias deprecatedAttributes =
-			AliasSeq!(filter!(traits.SinkElementType, traits.SourceElementType)(sinkm, sourcem));
-		pragma(msg, "Deprecated attributes on ", .str!S);
-	} else
-		alias deprecatedAttributes = AliasSeq!();
-
-	alias typed = AliasSeq!(deprecatedAttributes, Filter!(isMethodAttribute, __traits(getAttributes, S)));
+	alias typed = AliasSeq!(Filter!(isMethodAttribute, __traits(getAttributes, S)));
 	enum untyped = [ staticMap!(getUntyped, typed) ];
 
 	private {
@@ -195,7 +165,7 @@ unittest {
 }
 
 unittest {
-	@pushSink!int @pullSource!ulong
+	@filter!(int, ulong)(Method.push, Method.pull)
 	struct Foo {}
 	static assert(getMethods!Foo == [ filter(Method.push, Method.pull) ]);
 	static assert(is(getMethodAttributes!Foo.SinkElementType == int));
@@ -203,7 +173,7 @@ unittest {
 }
 
 unittest {
-	@allocSink!int
+	@sink!int(Method.alloc)
 	@sink(Method.push)
 	struct Foo {}
 	static assert(getMethods!Foo == [ sink(Method.alloc), sink(Method.push) ]);
@@ -228,135 +198,7 @@ unittest {
 	static assert(!__traits(compiles, getMethods!Foo)); // error: conflicting sink types (int, double)
 }
 
-deprecated {
-
-struct PullSource(E) {
-	size_t pull(E[] buf) { return buf.length; }
-	enum methodStr = "pull";
-}
-
-struct PeekSource(E) {
-	const(E)[] peek(size_t n) { return new E[n]; }
-	void consume(size_t n) {}
-	enum methodStr = "peek";
-}
-
-struct PushSource(E) {
-	enum methodStr = "push";
-}
-
-struct AllocSource(E) {
-	enum methodStr = "alloc";
-}
-
-struct PullSink(E) {
-	enum methodStr = "pull";
-}
-
-struct PeekSink(E) {
-	enum methodStr = "peek";
-}
-
-struct PushSink(E) {
-	size_t push(const(E)[] buf) { return buf.length; }
-	enum methodStr = "push";
-}
-
-struct AllocSink(E) {
-	bool alloc(ref E[] buf, size_t n) { buf = new E[n]; return true; }
-	void consume(size_t n) {}
-	enum methodStr = "alloc";
-}
-}
-
-enum pullSource(E) = PullSource!E();
-enum peekSource(E) = PeekSource!E();
-enum pushSource(E) = PushSource!E();
-enum allocSource(E) = AllocSource!E();
-
-enum pullSink(E) = PullSink!E();
-enum peekSink(E) = PeekSink!E();
-enum pushSink(E) = PushSink!E();
-enum allocSink(E) = AllocSink!E();
-
-private struct None {}
-
-private template isSame(alias S) {
-	template isSame(alias Z) {
-		enum isSame = is(Id!S == Id!Z);
-	}
-}
-
-private template areSame(W...) {
-	enum areSame = is(Id!(W[0 .. $ / 2]) == Id!(W[$ / 2 .. $]));
-}
-
-package template Traits(alias Src, alias Snk, SrcE, SnkE, UDAs...) {
-	static if (UDAs.length == 0) {
-		alias Source = Src;
-		alias Sink = Snk;
-		alias SourceElementType = SrcE;
-		alias SinkElementType = SnkE;
-		static if (!is(Src == None))
-			enum sourceMethodStr = Src!SrcE.methodStr;
-		else
-			enum sourceMethodStr = "";
-		static if (!is(Snk == None))
-			enum sinkMethodStr = Snk!SnkE.methodStr;
-		else
-			enum sinkMethodStr = "";
-		enum str = .str!Sink ~ "!" ~ .str!SinkElementType ~ "-" ~ .str!Source ~ "!" ~ .str!SourceElementType;
-	} else {
-		import std.meta : anySatisfy;
-
-		static if (is(typeof(UDAs[0]))) {
-			alias T = typeof(UDAs[0]);
-			static if (is(T == S!E, alias S, E)) {
-				static if (anySatisfy!(isSame!S, PullSource, PeekSource, PushSource, AllocSource)) {
-					static assert(is(Id!Src == Id!None), "Source interface declared more than once");
-					alias Traits = .Traits!(S, Snk, E, SnkE, UDAs[1 .. $]);
-				} else static if (anySatisfy!(isSame!S, PullSink, PeekSink, PushSink, AllocSink)) {
-					static assert(is(Id!Snk == Id!None), "Sink interface declared more than once");
-					alias Traits = .Traits!(Src, S, SrcE, E, UDAs[1 .. $]);
-				} else {
-					alias Traits = .Traits!(Src, Snk, SrcE, SnkE, UDAs[1 .. $]);
-				}
-			} else {
-				alias Traits = .Traits!(Src, Snk, SrcE, SnkE, UDAs[1 .. $]);
-			}
-		} else {
-			alias Traits = .Traits!(Src, Snk, SrcE, SnkE, UDAs[1 .. $]);
-		}
-	}
-}
-
-template Traits(alias S) {
-	alias Traits = Traits!(None, None, void, void, __traits(getAttributes, S));
-}
-
-unittest {
-	@peekSource!int @(100) @Id!"zombie"() @allocSink!(Id!1)
-	struct Foo {}
-	alias Tr = Traits!Foo;
-	static assert(areSame!(Tr.Source, PeekSource));
-	static assert(areSame!(Tr.SourceElementType, int));
-	static assert(areSame!(Tr.Sink, AllocSink));
-	static assert(areSame!(Tr.SinkElementType, Id!1));
-}
-
-unittest {
-	@pullSource!int @pushSource!ubyte
-	struct Bar {}
-	static assert(!__traits(compiles, Traits!Bar)); // source interface specified twice
-}
-
-unittest {
-	@pullSink!double @pushSink!string @peekSink!void
-	struct Baz {}
-	static assert(!__traits(compiles, Traits!Baz)); // sink interface specified 3x
-}
-
-bool implementsMethod(string endp)(Method m, MethodAttribute[] attrs...) {
+private bool implementsMethod(string endp)(Method m, MethodAttribute[] attrs...) {
 	foreach (attr; attrs) {
 		mixin(`bool im = attr.` ~ endp ~ `Method == m;`);
 		if (im) return true;
@@ -364,18 +206,18 @@ bool implementsMethod(string endp)(Method m, MethodAttribute[] attrs...) {
 	return false;
 }
 
-enum isPullSource(alias S) = areSame!(Traits!S.Source, PullSource) || implementsMethod!`source`(Method.pull, getMethods!S);
-enum isPeekSource(alias S) = areSame!(Traits!S.Source, PeekSource) || implementsMethod!`source`(Method.peek, getMethods!S);
-enum isPushSource(alias S) = areSame!(Traits!S.Source, PushSource) || implementsMethod!`source`(Method.push, getMethods!S);
-enum isAllocSource(alias S) = areSame!(Traits!S.Source, AllocSource) || implementsMethod!`source`(Method.alloc, getMethods!S);
+enum isPullSource(alias S) = implementsMethod!`source`(Method.pull, getMethods!S);
+enum isPeekSource(alias S) = implementsMethod!`source`(Method.peek, getMethods!S);
+enum isPushSource(alias S) = implementsMethod!`source`(Method.push, getMethods!S);
+enum isAllocSource(alias S) = implementsMethod!`source`(Method.alloc, getMethods!S);
 
-enum isPullSink(alias S) = areSame!(Traits!S.Sink, PullSink) || implementsMethod!`sink`(Method.pull, getMethods!S);
-enum isPeekSink(alias S) = areSame!(Traits!S.Sink, PeekSink) || implementsMethod!`sink`(Method.peek, getMethods!S);
-enum isPushSink(alias S) = areSame!(Traits!S.Sink, PushSink) || implementsMethod!`sink`(Method.push, getMethods!S);
-enum isAllocSink(alias S) = areSame!(Traits!S.Sink, AllocSink) || implementsMethod!`sink`(Method.alloc, getMethods!S);
+enum isPullSink(alias S) = implementsMethod!`sink`(Method.pull, getMethods!S);
+enum isPeekSink(alias S) = implementsMethod!`sink`(Method.peek, getMethods!S);
+enum isPushSink(alias S) = implementsMethod!`sink`(Method.push, getMethods!S);
+enum isAllocSink(alias S) = implementsMethod!`sink`(Method.alloc, getMethods!S);
 
 unittest {
-	@pullSource!int @pullSink!bool
+	@filter!(bool, int)(Method.pull)
 	struct Foo {}
 	static assert( isPullSource!Foo);
 	static assert(!isPeekSource!Foo);
@@ -396,45 +238,3 @@ enum isActiveSink(alias S) = isPeekSink!S || isPullSink!S;
 enum isSink(alias S) = isPassiveSink!S || isActiveSink!S;
 
 enum isStage(alias S) = isSource!S || isSink!S;
-
-/** Returns `true` if `Source` is a source and `Sink` is a sink and they both use the same
- *  method of passing data.
- */
-enum areCompatible(alias Source, alias Sink) =
-	(isPeekSource!Source && isPeekSink!Sink)
-		|| (isPullSource!Source && isPullSink!Sink)
-		|| (isAllocSource!Source && isAllocSink!Sink)
-		|| (isPushSource!Source && isPushSink!Sink);
-
-template sourceMethod(alias S) {
-	static if (isPeekSource!S) {
-		alias sourceMethod = peekSource!(Traits!S.SourceElementType);
-	} else static if (isPullSource!S) {
-		alias sourceMethod = pullSource!(Traits!S.SourceElementType);
-	} else static if (isAllocSource!S) {
-		alias sourceMethod = allocSource!(Traits!S.SourceElementType);
-	} else static if (isPushSource!S) {
-		alias sourceMethod = pushSource!(Traits!S.SourceElementType);
-	} else {
-		bool sourceMethod() { return false; }
-	}
-}
-
-template sinkMethod(alias S) {
-	static if (isPeekSink!S) {
-		alias sinkMethod = peekSink!(Traits!S.SinkElementType);
-	} else static if (isPullSink!S) {
-		alias sinkMethod = pullSink!(Traits!S.SinkElementType);
-	} else static if (isAllocSink!S) {
-		alias sinkMethod = allocSink!(Traits!S.SinkElementType);
-	} else static if (isPushSink!S) {
-		alias sinkMethod = pushSink!(Traits!S.SinkElementType);
-	} else {
-		bool sinkMethod() { return false; }
-	}
-}
-
-unittest {
-	@peekSource!double static struct Foo {}
-	static assert(sourceMethod!Foo == peekSource!double);
-}
