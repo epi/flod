@@ -48,11 +48,12 @@
 - [ ] Dynamic (run-time polymorphic) stage interface.
 - [ ] Stable API.
 
-## 3rd party packages
+## External packages
 
 The *flod* package provides only basic building blocks.
-Pipes doing useful transformations will be implemented in separate packages,
-either natively in D or as wrappers over libraries written in other languages, mainly C.
+Pipes doing anything more interesting than just passing unchanged data around will be implemented
+in separate packages, either natively in D or as wrappers over libraries written in other languages,
+mainly C.
 Some of them are already under development:
 - [flod-curl](https://github.com/epi/flod-curl) – download files from the web using libcurl.
 - [flod-zlib](https://github.com/epi/flod-zlib) – inflate and deflate streams of data.
@@ -72,6 +73,7 @@ There are several libraries in D and other languages which share some goals with
 - [IO Streams](https://github.com/jasonwhite/io) – Jason White's IO stream library for D.
 - [Boost.Iostreams](http://www.boost.org/libs/iostreams) – composable streams in C++.
 - [GStreamer](https://gstreamer.freedesktop.org/) – C library for constructing graphs of media-handling components.
+- [RaftLib](http://www.raftlib.io/) – Jonathan Beard's C++ library for Stream Parallel Processing.
 
 ## Release history
 
