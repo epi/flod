@@ -17,6 +17,10 @@ enum Method {
 	alloc = 3, /// Source requests a writable view on sink's buffer.
 }
 
+enum string[Method.max + 1] methodNames = [
+	Method.pull : "pull", Method.peek : "peek",
+	Method.push : "push", Method.alloc : "alloc" ];
+
 private enum nullMethod = cast(Method) -1;
 
 struct MethodAttribute {
