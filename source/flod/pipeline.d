@@ -6,7 +6,7 @@
  */
 module flod.pipeline;
 
-import std.meta : AliasSeq;
+import std.meta : AliasSeq, staticMap;
 import std.range : isDynamicArray, isInputRange;
 import std.typecons : Flag, Yes, No;
 
@@ -15,7 +15,151 @@ import flod.metadata;
 import flod.range;
 import flod.traits;
 
-struct SinkDrivenFiberScheduler {
+/**
+Find optimal choice of methods for all stages.
+
+Each stage may implement more than one method or method pair. This function is used in compile time
+to find a set of methods that will result in the smallest overhead, according to predefined
+static costs of connecting sinks to sources implementing different methods.
+Compatible methods always have a cost of 0. Implicit adapters are given positive costs depending
+on whether they involve e.g. data copying or context switching.
+*/
+private MethodAttribute[] chooseOptimalMethods(Flag!`bruteForce` brute_force = No.bruteForce)(MethodAttribute[][] stages)
+{
+	if (stages.length == 1)
+		return [ stages[0][0] ];
+
+	assert(stages.length >= 2);
+
+	// FIXME: these numbers are made up out of thin air, update them based on some benchmarks.
+	enum pairwiseCost = [
+		[ 0, 5, 15, 10 ],
+		[ 50, 0, 10, 60 ],
+		[ 145, 95, 0, 50 ],
+		[ 95, 45, 5, 0 ]
+	];
+
+	static if (brute_force) {
+		// just test all possible permutations
+		auto result = new size_t[stages.length];
+		auto minCost = uint.max;
+		auto ind = new size_t[stages.length];
+		for (;;) {
+			uint cost;
+			foreach (i; 1 .. stages.length)
+				cost += pairwiseCost[stages[i - 1][ind[i - 1]].sourceMethod][stages[i][ind[i]].sinkMethod];
+			if (cost < minCost) {
+				minCost = cost;
+				result[] = ind[];
+			}
+			foreach (i; 0 .. stages.length) {
+				if (++ind[i] < stages[i].length)
+					break;
+				ind[i] = 0;
+				if (i == stages.length - 1) {
+					import std.range : enumerate, array;
+					return result.enumerate.map!(t => stages[t.index][t.value]).array();
+				}
+			}
+		}
+	} else {
+		// solve using dynamic programming
+		static struct Choice {
+			size_t previous = 0;
+			uint totalCost = 0;
+		}
+		Choice[][] choices;
+		choices.length = stages.length;
+		choices[0].length = stages[0].length;
+		foreach (stage; 1 .. stages.length) {
+			choices[stage].length = stages[stage].length;
+			foreach (sinkindex, sink; stages[stage]) {
+				size_t ch;
+				uint mincost = uint.max;
+				foreach (sourceindex, source; stages[stage - 1]) {
+					auto cost = choices[stage - 1][sourceindex].totalCost
+						+ pairwiseCost[source.sourceMethod][sink.sinkMethod];
+					if (cost < mincost) {
+						ch = sourceindex;
+						mincost = cost;
+					}
+				}
+				choices[stage][sinkindex] = Choice(ch, mincost);
+			}
+		}
+		auto result = new MethodAttribute[](stages.length);
+		// topNIndex doesn't work in CT...
+		import std.algorithm : minPos;
+		auto lastindex = choices[$ - 1].length - minPos!((a, b) => a.totalCost < b.totalCost)(choices[$ - 1]).length;
+		foreach_reverse (stage, ref ma; result) {
+			ma = stages[stage][lastindex];
+			lastindex = choices[stage][lastindex].previous;
+		}
+		return result;
+	}
+}
+
+version(unittest) {
+	MethodAttribute[][] methodAttributesFromString(string str)
+	{
+		enum tr = [
+			"pull" : Method.pull,
+			"peek" : Method.peek,
+			"push" : Method.push,
+			"alloc" : Method.alloc ];
+		auto stages = str.split(",");
+		auto result = [ stages[0].split("/").map!(a => source(tr[a]).methods).array ];
+		if (stages.length > 1) {
+			result ~= stages[1 .. $ - 1].map!(st =>
+					st.split("/")
+						.map!(m => m.split("-"))
+						.map!(m => filter(tr[m[0]], tr[m[1]]).methods)
+						.array
+					).array
+				~ stages[$ - 1].split("/").map!(a => sink(tr[a]).methods).array;
+		}
+		return result;
+	}
+
+	unittest {
+		assert(methodAttributesFromString(
+			"pull/peek,push") == [
+				[ source(Method.pull), source(Method.peek) ],
+				[ sink(Method.push) ]
+			]);
+		assert(methodAttributesFromString(
+			"pull/peek/alloc,push-alloc/alloc-pull,peek-push,peek-pull/push-peek/push-alloc,push/peek") == [
+				[ source(Method.pull), source(Method.peek), source(Method.alloc) ],
+				[ filter(Method.push, Method.alloc), filter(Method.alloc, Method.pull) ],
+				[ filter(Method.peek, Method.push) ],
+				[ filter(Method.peek, Method.pull), filter(Method.push, Method.peek), filter(Method.push, Method.alloc) ],
+				[ sink(Method.push), sink(Method.peek) ]
+			]);
+	}
+
+	bool testOptimizeChain(string str)
+	{
+		auto inp = methodAttributesFromString(str);
+		auto outp = chooseOptimalMethods(inp);
+		auto outpb = chooseOptimalMethods!(Yes.bruteForce)(inp);
+		assert(outp == outpb, {
+				import std.experimental.logger : logf;
+				logf("bf:  %s", outpb);
+				logf("dyn: %s", outp);
+				return str;
+			}());
+		return true;
+	}
+}
+
+unittest {
+	testOptimizeChain("pull");
+	testOptimizeChain("pull,pull");
+	testOptimizeChain("pull/peek/alloc,push-alloc/alloc-peek,peek-alloc/alloc-peek,push-alloc/alloc-peek/peek-push,push");
+	enum a = testOptimizeChain("pull,peek-pull/alloc-pull,peek");
+}
+
+struct FiberSwitch {
 	import core.thread : Fiber;
 	Fiber fiber;
 	mixin NonCopyable;
@@ -33,6 +177,14 @@ struct SinkDrivenFiberScheduler {
 		}
 	}
 
+	/**
+	Switch context.
+
+	Executes the other context up to the point where it also calls yield()
+	on the same FiberSwitch, or returns.
+
+	Returns: non-zero if the other context finished execution.
+	*/
 	int yield()
 	{
 		if (fiber is null)
@@ -48,30 +200,37 @@ struct SinkDrivenFiberScheduler {
 	}
 }
 
-private mixin template Context(PL, Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
+private mixin template Context(PL, InputE, OutputE,
+	Method sink_method, Method source_method,
+	Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
 	size_t index, size_t driverIndex)
 {
-	import flod.pipeline : isPassiveSink, isPassiveSource;
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }
-	@property ref auto sourceDriver()() { return outer.tup[driverIndex]; }
-	static if (passiveFilter) {
-		SinkDrivenFiberScheduler _flod_scheduler;
 
-		int yield()() { return _flod_scheduler.yield(); }
+	alias InputElementType = InputE;
+	alias OutputElementType = OutputE;
+	enum inputMethod = sink_method;
+	enum outputMethod = source_method;
+
+	static if (passiveFilter) {
+		FiberSwitch _flod_switch;
+
+		int yield()() { return _flod_switch.yield(); }
 		void spawn()()
 		{
 			import core.thread : Fiber;
-			if (!_flod_scheduler.fiber) {
-				static if (__traits(compiles, &sourceDriver.run!()))
-					auto runf = &sourceDriver.run!();
+			auto next_driver = &outer.tup[driverIndex];
+			if (!_flod_switch.fiber) {
+				static if (__traits(compiles, &next_driver.run!()))
+					auto runf = &next_driver.run!();
 				else
-					auto runf = &sourceDriver.run;
-				_flod_scheduler.fiber = new Fiber(runf, 65536);
+					auto runf = &next_driver.run;
+				_flod_switch.fiber = new Fiber(runf, 65536);
 			}
 		}
-		void stop()() { _flod_scheduler.stop(); }
+		void stop()() { _flod_switch.stop(); }
 	}
 
 	@property void tag(string key)(PL.Metadata.ValueType!key value)
@@ -103,16 +262,56 @@ private void constructInPlace(T, Args...)(ref T t, auto ref Args args)
 	}
 }
 
+private struct StageSpec(alias S, A...) {
+	alias Stage = S;
+	alias Args = A;
+	Args args;
+}
+
+// Used to catch StageSpec from a stage factory function.
+private static struct FakeSchema {
+	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs args)
+	{
+		return StageSpec!(NextStage, NextArgs)(args);
+	}
+}
+
 /**
-A placeholder for the initial stage's source schema.
+Determines which driver drives the entire pipeline in pipelines with multiple drivers.
 */
-private struct NullSchema {
-	enum size_t length = 0;
-	enum size_t driverIndex = -1;
-	enum str = "";
-	enum treeStr(int indent) = "";
-	alias StageSeq = AliasSeq!();
-	enum size_t[] drivers = [];
+enum DriveMode {
+	source, /// The leftmost driver drives the entire pipeline.
+	sink    /// The rightmost driver drives the entire pipeline.
+}
+
+private size_t getNextDriver(DriveMode mode, size_t i, MethodAttribute[] methods) {
+	if (i >= methods.length)
+		return -1;
+	//assert(i < methods.length);
+	return methods[i].isDriver ? i : getNextDriver(mode, i + (mode == DriveMode.source ? 1 : -1), methods);
+}
+
+private size_t getFirstDriver(DriveMode mode, MethodAttribute[] methods)
+{
+	return getNextDriver(mode, (mode == DriveMode.source ? 0 : methods.length - 1), methods);
+}
+
+private static struct AdapterInsertionInfo {
+	size_t index;
+	string name;
+}
+
+// Used in CT to build list of adapters that need to be inserted according to the specified methods.
+private static AdapterInsertionInfo[] buildListOfAdapters(const(MethodAttribute)[] methods)
+{
+	import std.string : capitalize;
+	AdapterInsertionInfo[] result;
+	foreach (i; 0 .. methods.length - 1) {
+		if (methods[i].sourceMethod != methods[i + 1].sinkMethod)
+			result ~= AdapterInsertionInfo(i + 1,
+				methodNames[methods[i].sourceMethod] ~ methodNames[methods[i + 1].sinkMethod].capitalize);
+	}
+	return result;
 }
 
 /**
@@ -127,89 +326,83 @@ Params:
     Src = Type of schema object describing the previous stages.
     A   = Types of arguments passed to S's instance ctor.
 */
-private struct Schema(alias S, Src, A...) {
+private struct Schema(DriveMode mode, S...) {
 	import std.conv : to;
-	alias LastStage = S;
-	alias Args = A;
-	alias Source = Src;
-	/// all stages as an AliasSeq.
-	alias StageSeq = AliasSeq!(Source.StageSeq, LastStage);
+	alias StageSpecSeq = S;
+	alias getStage(Z) = Z.Stage;
+	alias StageSeq = staticMap!(getStage, S, StageSpec!StageSpec)[0 .. $ - 1];
 	alias FirstStage = StageSeq[0];
+	alias LastStage = StageSeq[$ - 1];
 
-	private enum bool isDriver =
-		   (isActiveSource!LastStage && !isPassiveSink!LastStage)
-		|| (isActiveSink!LastStage && !isPassiveSource!LastStage);
-	enum size_t driverIndex = isDriver ? index : Source.driverIndex;
-	enum size_t index = Source.length;
-	enum size_t length  = Source.length + 1;
-	enum drivers = Source.drivers ~ driverIndex;
+	enum size_t length = S.length;
+	enum driveMode = mode;
 
-	enum hasSource = !is(Source == NullSchema);
+	alias ElementType = SourceElementType!(length - 1, StageSeq);
 
-	static if (is(Traits!LastStage.SourceElementType W))
-		alias ElementType = W;
+	StageSpecSeq stages;
 
-	enum str = (hasSource ? Source.str ~ "->" : "") ~ index.to!string ~ (isDriver ? "*" : ".") ~ .str!LastStage;
-
-	Source source;
-	Args args;
+	version(unittest) {
+		auto drive(DriveMode mode)() {
+			return Schema!(mode, StageSpecSeq)(stages);
+		}
+	}
 
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
-		alias SourceE = Traits!LastStage.SourceElementType;
-		alias SinkE = Traits!NextStage.SinkElementType;
-		static assert(is(SourceE == SinkE), "Incompatible element types: " ~
-			.str!LastStage ~ " produces " ~ SourceE.stringof ~ ", while " ~
-			.str!NextStage ~ " expects " ~ SinkE.stringof);
-
-		static if (areCompatible!(LastStage, NextStage)) {
-			auto result = schema!NextStage(this, nextArgs);
-			static if (isSource!NextStage || isSink!FirstStage)
-				return result;
-			else
-				result.run();
-		} else {
-			import std.string : capitalize;
-			import flod.adapter;
-			enum adapterName = Traits!LastStage.sourceMethodStr ~ Traits!NextStage.sinkMethodStr.capitalize();
-			mixin(`return this.` ~ adapterName ~ `.pipe!NextStage(nextArgs);`);
-		}
+		alias T = StageSpec!(NextStage, NextArgs);
+		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
+		static if (isSource!NextStage || isSink!FirstStage)
+			return result;
+		else
+			result.run();
 	}
 
-	void construct(T)(ref T t)
+	void run()()
 	{
-		static if (hasSource) {
-			source.construct(t);
-		}
-		constructInPlace(t.tup[index], args);
-		static if (isPassiveSink!LastStage && isPassiveSource!LastStage)
-			t.tup[index].spawn();
+		create().run();
 	}
 
-	static if (!isSink!FirstStage && !isSource!LastStage) {
-		void run()()
-		{
-			Pipeline!Schema p;
-			construct(p);
-			p.run();
+	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
+	{
+		static if (i < StageSeq.length) {
+			constructInPlace(pipeline.tup[i], stages[i].args);
+			construct!(i + 1)(pipeline);
 		}
 	}
 
-	static if (!isSink!FirstStage && !isActiveSource!LastStage) {
-		auto create()()
-		{
-			Pipeline!Schema p;
-			construct(p);
-			return p;
+	private auto insertAdapters(const(AdapterInsertionInfo)[] info)()
+	{
+		static if (info.length == 0) {
+			return this;
+		} else {
+			import flod.adapter;
+			enum lastAdapter = info[$ - 1];
+			mixin(`auto spec = FakeSchema().` ~ lastAdapter.name ~ `;`);
+			alias T = Schema!(driveMode, S[0 .. lastAdapter.index], typeof(spec), S[lastAdapter.index .. $]);
+			auto schema = T(stages[0 .. lastAdapter.index], spec, stages[lastAdapter.index .. $]);
+			static if (info.length == 1)
+				return schema;
+			else
+				return schema.insertAdapters!(info[0 .. $ - 1]);
 		}
 	}
-}
 
-/// Factory function for Schema
-private auto schema(alias Stage, Source, Args...)(auto ref Source sourceSchema, auto ref Args args)
-{
-	return Schema!(Stage, Source, Args)(sourceSchema, args);
+	private auto doCreate()()
+	{
+		Pipeline!(driveMode, StageSeq) p;
+		construct(p);
+		return p;
+	}
+
+	auto create()()
+	{
+		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
+		static if (adapters.length == 0)
+			return doCreate();
+		else
+			return insertAdapters!adapters().doCreate();
+	}
 }
 
 private template testSchema(Sch, alias test) {
@@ -223,7 +416,8 @@ enum isSchema(P) =
 	   isDynamicArray!P || testSchema!(P, isPeekSource)
 	|| isInputRange!P || testSchema!(P, isPullSource)
 	|| testSchema!(P, isPushSource)
-	|| testSchema!(P, isAllocSource);
+	|| testSchema!(P, isAllocSource)
+	|| is(P == FakeSchema);
 
 ///
 auto pipe(alias Stage, Args...)(auto ref Args args)
@@ -233,8 +427,10 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
 	else static if (isSink!Stage && Args.length > 0 && isInputRange!(Args[0]))
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
-	else
-		return schema!Stage(NullSchema(), args);
+	else {
+		alias T = StageSpec!(Stage, Args);
+		return Schema!(DriveMode.sink, T)(T(args));
+	}
 }
 
 ///
@@ -244,47 +440,85 @@ auto pipe(E, alias Dg)()
 }
 
 /// A pipeline built based on schema S.
-struct Pipeline(S)
-{
-	alias Schema = S;
+struct Pipeline(DriveMode mode, S...) {
+private:
+	enum driveMode = mode;
+	alias StageSeq = S;
+	alias LastStage = StageSeq[$ - 1];
+	enum methods = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods;
+	static assert(allCompatible(methods));
+
+	static bool allCompatible(in MethodAttribute[] methods)
+	{
+		foreach (i; 0 .. methods.length - 1)
+			if (methods[i].sourceMethod != methods[i + 1].sinkMethod)
+				return false;
+		return true;
+	}
 
 	template StageType(size_t i) {
-		alias Stage = Schema.StageSeq[i];
+		alias Stage = StageSeq[i];
 		alias StageType = Stage!(Context, Pipeline,
-			(isPassiveSink!Stage && isPassiveSource!Stage)
-			? Yes.passiveFilter : No.passiveFilter, i, Schema.drivers[i]);
+			SinkElementType!(i, StageSeq), SourceElementType!(i, StageSeq),
+			methods[i].sinkMethod, methods[i].sourceMethod,
+			methods[i].isPassiveFilter ? Yes.passiveFilter : No.passiveFilter,
+			i, getNextDriver(driveMode, i, methods));
 	}
 
 	template StageTypeTuple(size_t i) {
-		static if (i >= Schema.StageSeq.length)
+		static if (i >= StageSeq.length)
 			alias Tuple = AliasSeq!();
-		else {
+		else
 			alias Tuple = AliasSeq!(StageType!i, StageTypeTuple!(i + 1).Tuple);
-		}
 	}
 
-	alias TagSpecs = FilterTagAttributes!(0, Schema.StageSeq);
+	alias TagSpecs = FilterTagAttributes!(0, StageSeq);
 	alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
-	Tuple tup;
-	Metadata metadata;
+	public Tuple tup;
+	public Metadata metadata;
 
-	static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
+	public static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
 	{
 		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
 	}
 
-	static if (isPeekSource!(Schema.LastStage)) {
-		const(Schema.ElementType)[] peek()(size_t n) { return tup[Schema.index].peek(n); }
-		void consume()(size_t n) { tup[Schema.index].consume(n); }
-	} else static if (isPullSource!(Schema.LastStage)) {
-		size_t pull()(Schema.ElementType[] buf) { return tup[Schema.index].pull(buf); }
+	static if (isPeekSource!(LastStage)) {
+		alias ElementType = SourceElementType!LastStage;
+		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
+		void consume()(size_t n) { tup[$ - 1].consume(n); }
+	} else static if (isPullSource!(LastStage)) {
+		alias ElementType = SourceElementType!LastStage;
+		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
 	} else {
 		// TODO: sink pipelines.
+
+		// Spawns secondary drivers, if any.
+		private void spawn(size_t i = 0)()
+		{
+			static if (methods[i].isPassiveFilter)
+				tup[i].spawn();
+			static if (i + 1 < StageSeq.length)
+				spawn!(i + 1)();
+		}
+
+		// Calls all secondary drivers for the last time to make sure they have completed.
+		private void stop(size_t i = 0)()
+		{
+			static if (methods[i].isPassiveFilter)
+				tup[i].stop();
+			static if (i + 1 < StageSeq.length)
+				stop!(i + 1)();
+		}
+
 		void run()()
 		{
-			tup[Schema.driverIndex].run();
+			spawn();
+			enum driver = getFirstDriver(driveMode, methods);
+			static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
+			tup[driver].run();
+			stop();
 		}
 	}
 }
@@ -303,13 +537,13 @@ version(unittest) {
 	uint filterMark(string f) {
 		f = f.toLower;
 		uint fm;
-		if (f.startsWith("pull"))
+		if (f.startsWith("peek"))
 			fm = 1;
 		else if (f.startsWith("push"))
 			fm = 2;
 		else if (f.startsWith("alloc"))
 			fm = 3;
-		if (f.endsWith("pull"))
+		if (f.endsWith("peek"))
 			fm |= 1 << 2;
 		else if (f.endsWith("push"))
 			fm |= 2 << 2;
@@ -318,24 +552,17 @@ version(unittest) {
 		return fm;
 	}
 
-	ulong filter(string f)(ulong a) {
+	ulong filterImpl(string f)(ulong a) {
 		enum fm = filterMark(f);
 		return (a << 4) | fm;
 	}
 
-	// sources:
-	struct Arg(alias T) { bool constructed = false; }
+	struct Arg(alias T) { alias Stage = T; bool constructed = false; }
 
 	mixin template TestStage(N...) {
 		alias This = typeof(this);
-		static if (is(This == A!(B, C), alias A, B, C))
-			alias Stage = A;
-		else static if (is(This == D!(E), alias D, E))
-			alias Stage = D;
-		else static if (is(This == F!G, alias F, alias G))
+		static if (is(This == F!G, alias F, alias G))
 			alias Stage = F;
-		else static if (is(This))
-			alias Stage = This;
 		else
 			static assert(0, "don't know how to get stage from " ~ This.stringof ~ " (" ~ str!This ~ ")");
 
@@ -347,11 +574,8 @@ version(unittest) {
 		Arg!Stage arg;
 	}
 
-	@pullSource!ulong
-	struct TestPullSource(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	// sources:
+	mixin template ImplementTestPullSource() {
 		size_t pull(ulong[] buf)
 		{
 			auto len = min(buf.length, inputArray.length);
@@ -361,25 +585,16 @@ version(unittest) {
 		}
 	}
 
-	@peekSource!ulong
-	struct TestPeekSource(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPeekSource() {
 		const(ulong)[] peek(size_t n)
 		{
 			auto len = min(max(n, 2909), inputArray.length);
 			return inputArray[0 .. len];
 		}
-
 		void consume(size_t n) { inputArray = inputArray[n .. $]; }
 	}
 
-	@pushSource!ulong
-	struct TestPushSource(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPushSource() {
 		void run()()
 		{
 			while (inputArray.length) {
@@ -391,11 +606,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSource!ulong
-	struct TestAllocSource(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestAllocSource() {
 		void run()()
 		{
 			ulong[] buf;
@@ -411,13 +622,54 @@ version(unittest) {
 		}
 	}
 
-	// sinks:
+	@source!ulong(Method.pull)
+	struct TestPullSource(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestPullSource;
+	}
 
-	@pullSink!ulong
-	struct TestPullSink(alias Context, A...) {
+	@source!ulong(Method.peek)
+	struct TestPeekSource(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestPeekSource;
+	}
+
+	@source!ulong(Method.push)
+	struct TestPushSource(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestPushSource;
+	}
+
+	@source!ulong(Method.alloc)
+	struct TestAllocSource(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestAllocSource;
+	}
+
+	@source!ulong(Method.peek)
+	@source(Method.pull)
+	@source(Method.push)
+	@source(Method.alloc)
+	struct UniversalTestSource(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
 
+		static if (outputMethod == Method.pull)
+			mixin ImplementTestPullSource;
+		else static if (outputMethod == Method.peek)
+			mixin ImplementTestPeekSource;
+		else static if (outputMethod == Method.push)
+			mixin ImplementTestPushSource;
+		else static if (outputMethod == Method.alloc)
+			mixin ImplementTestAllocSource;
+	}
+
+	// sinks:
+	mixin template ImplementTestPullSink() {
 		void run()
 		{
 			while (outputIndex < outputArray.length) {
@@ -430,11 +682,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSink!ulong
-	struct TestPeekSink(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPeekSink() {
 		void run()
 		{
 			while (outputIndex < outputArray.length) {
@@ -450,11 +698,7 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong
-	struct TestPushSink(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPushSink() {
 		size_t push(const(ulong)[] buf)
 		{
 			auto len = min(buf.length, outputArray.length - outputIndex);
@@ -466,10 +710,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong
-	struct TestAllocSink(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestAllocSink() {
 		ulong[] last;
 
 		bool alloc(ref ulong[] buf, size_t n)
@@ -497,45 +738,77 @@ version(unittest) {
 		}
 	}
 
-	// filter
-
-	@peekSink!ulong @peekSource!ulong
-	struct TestPeekFilter(alias Context, A...) {
+	@sink(Method.pull)
+	struct TestPullSink(alias Context, A...) {
 		mixin TestStage;
 		mixin Context!A;
+		mixin ImplementTestPullSink;
+	}
 
+	@sink(Method.peek)
+	struct TestPeekSink(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestPeekSink;
+	}
+
+	@sink(Method.push)
+	struct TestPushSink(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestPushSink;
+	}
+
+	@sink(Method.alloc)
+	struct TestAllocSink(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTestAllocSink;
+	}
+
+	@sink(Method.pull)
+	@sink(Method.peek)
+	@sink(Method.push)
+	@sink(Method.alloc)
+	struct UniversalTestSink(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		static if (inputMethod == Method.pull)
+			mixin ImplementTestPullSink;
+		else static if (inputMethod == Method.peek)
+			mixin ImplementTestPeekSink;
+		else static if (inputMethod == Method.push)
+			mixin ImplementTestPushSink;
+		else static if (inputMethod == Method.alloc)
+			mixin ImplementTestAllocSink;
+	}
+
+	// filter
+	mixin template ImplementTestPeekFilter() {
 		const(ulong)[] peek(size_t n)
 		{
-			return source.peek(n).map!(filter!"peek").array();
+			return source.peek(n).map!(filterImpl!"peek").array();
 		}
 		void consume(size_t n) { source.consume(n); }
 	}
 
-	@peekSink!ulong @pullSource!ulong
-	struct TestPeekPullFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPeekPullFilter() {
 		size_t pull(ulong[] buf)
 		{
 			auto ib = source.peek(buf.length);
 			auto len = min(ib.length, buf.length);
-			ib.take(len).map!(filter!"peekPull").copy(buf);
+			ib.take(len).map!(filterImpl!"peekPull").copy(buf);
 			source.consume(len);
 			return len;
 		}
 	}
 
-	@peekSink!ulong @pushSource!ulong
-	struct TestPeekPushFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPeekPushFilter() {
 		void run()()
 		{
 			for (;;) {
 				auto ib = source.peek(4096);
-				auto ob = ib.map!(filter!"peekPush").array();
+				auto ob = ib.map!(filterImpl!"peekPush").array();
 				source.consume(ib.length);
 				if (sink.push(ob) < 4096)
 					break;
@@ -543,11 +816,7 @@ version(unittest) {
 		}
 	}
 
-	@peekSink!ulong @allocSource!ulong
-	struct TestPeekAllocFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPeekAllocFilter() {
 		void run()()
 		{
 			ulong[] buf;
@@ -556,7 +825,7 @@ version(unittest) {
 				if (!sink.alloc(buf, ib.length))
 					assert(0);
 				auto len = min(ib.length, buf.length);
-				ib.take(len).map!(filter!"peekAlloc").copy(buf);
+				ib.take(len).map!(filterImpl!"peekAlloc").copy(buf);
 				source.consume(len);
 				if (sink.commit(len) < 4096)
 					break;
@@ -564,59 +833,43 @@ version(unittest) {
 		}
 	}
 
-	@pullSink!ulong @pullSource!ulong
-	struct TestPullFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPullFilter() {
 		size_t pull(ulong[] buf)
 		{
 			size_t n = source.pull(buf);
 			foreach (ref b; buf[0 .. n])
-				b = b.filter!"pull";
+				b = b.filterImpl!"pull";
 			return n;
 		}
 	}
 
-	@pullSink!ulong @peekSource!ulong
-	struct TestPullPeekFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPullPeekFilter() {
 		const(ulong)[] peek(size_t n)
 		{
 			auto buf = new ulong[n];
 			size_t m = source.pull(buf[]);
 			foreach (ref b; buf[0 .. m])
-				b = b.filter!"pullPeek";
+				b = b.filterImpl!"pullPeek";
 			return buf[0 .. m];
 		}
 		void consume(size_t n) {}
 	}
 
-	@pullSink!ulong @pushSource!ulong
-	struct TestPullPushFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPullPushFilter() {
 		void run()()
 		{
 			for (;;) {
 				ulong[4096] buf;
 				auto n = source.pull(buf[]);
 				foreach (ref b; buf[0 .. n])
-					b = b.filter!"pullPush";
+					b = b.filterImpl!"pullPush";
 				if (sink.push(buf[0 .. n]) < 4096)
 					break;
 			}
 		}
 	}
 
-	@pullSink!ulong @allocSource!ulong
-	struct TestPullAllocFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPullAllocFilter() {
 		void run()()
 		{
 			for (;;) {
@@ -625,29 +878,21 @@ version(unittest) {
 					assert(0);
 				auto n = source.pull(buf[]);
 				foreach (ref b; buf[0 .. n])
-					b = b.filter!"pullAlloc";
+					b = b.filterImpl!"pullAlloc";
 				if (sink.commit(n) < 4096)
 					break;
 			}
 		}
 	}
 
-	@pushSink!ulong @pushSource!ulong
-	struct TestPushFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPushFilter() {
 		size_t push(const(ulong)[] buf)
 		{
-			return sink.push(buf.map!(filter!"push").array());
+			return sink.push(buf.map!(filterImpl!"push").array());
 		}
 	}
 
-	@pushSink!ulong @allocSource!ulong
-	struct TestPushAllocFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
-
+	mixin template ImplementTestPushAllocFilter() {
 		size_t push(const(ulong)[] buf)
 		out(result) { assert(result <= buf.length); }
 		body
@@ -656,20 +901,17 @@ version(unittest) {
 			if (!sink.alloc(ob, buf.length))
 				assert(0);
 			auto len = min(buf.length, ob.length);
-			buf.take(len).map!(filter!"pushAlloc").copy(ob);
+			buf.take(len).map!(filterImpl!"pushAlloc").copy(ob);
 			return sink.commit(len);
 		}
 	}
 
-	@pushSink!ulong @pullSource!ulong
-	struct TestPushPullFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestPushPullFilter() {
 		ulong[] buffer;
 
 		size_t push(const(ulong)[] buf)
 		{
-			buffer ~= buf.map!(filter!"pushPull").array();
+			buffer ~= buf.map!(filterImpl!"pushPull").array();
 			if (yield())
 				return 0;
 			return buf.length;
@@ -689,15 +931,12 @@ version(unittest) {
 		}
 	}
 
-	@pushSink!ulong @peekSource!ulong
-	struct TestPushPeekFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestPushPeekFilter() {
 		ulong[] buffer;
 
 		size_t push(const(ulong)[] buf)
 		{
-			buffer ~= buf.map!(filter!"pushPeek").array();
+			buffer ~= buf.map!(filterImpl!"pushPeek").array();
 			if (yield())
 				return 0;
 			return buf.length;
@@ -718,10 +957,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @allocSource!ulong
-	struct TestAllocFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestAllocFilter() {
 		ulong[] buf;
 
 		bool alloc(ref ulong[] buf, size_t n)
@@ -734,15 +970,12 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buf[0 .. n])
-				b = b.filter!"alloc";
+				b = b.filterImpl!"alloc";
 			return sink.commit(n);
 		}
 	}
 
-	@allocSink!ulong @pushSource!ulong
-	struct TestAllocPushFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestAllocPushFilter() {
 		ulong[] buffer;
 
 		bool alloc(ref ulong[] buf, size_t n)
@@ -753,16 +986,13 @@ version(unittest) {
 
 		size_t commit(size_t n)
 		{
-			size_t m = sink.push(buffer[0 .. n].map!(filter!"allocPush").array());
+			size_t m = sink.push(buffer[0 .. n].map!(filterImpl!"allocPush").array());
 			buffer = buffer[m .. $];
 			return m;
 		}
 	}
 
-	@allocSink!ulong @pullSource!ulong
-	struct TestAllocPullFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestAllocPullFilter() {
 		ulong[] buffer;
 		size_t readOffset;
 		size_t writeOffset;
@@ -777,7 +1007,7 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buffer[writeOffset .. writeOffset + n])
-				b = b.filter!"allocPull";
+				b = b.filterImpl!"allocPull";
 			writeOffset += n;
 			if (yield())
 				return 0;
@@ -798,10 +1028,7 @@ version(unittest) {
 		}
 	}
 
-	@allocSink!ulong @peekSource!ulong
-	struct TestAllocPeekFilter(alias Context, A...) {
-		mixin TestStage;
-		mixin Context!A;
+	mixin template ImplementTestAllocPeekFilter() {
 		ulong[] buffer;
 		size_t readOffset;
 		size_t writeOffset;
@@ -816,7 +1043,7 @@ version(unittest) {
 		size_t commit(size_t n)
 		{
 			foreach (ref b; buffer[writeOffset .. writeOffset + n])
-				b = b.filter!"allocPeek";
+				b = b.filterImpl!"allocPeek";
 			writeOffset += n;
 			if (yield())
 				return 0;
@@ -838,6 +1065,51 @@ version(unittest) {
 		}
 	}
 
+	mixin({
+			import std.algorithm : cartesianProduct;
+			import std.array : appender;
+			import std.string : capitalize;
+			import std.format : formattedWrite;
+			auto app = appender!string();
+			foreach (sink; methodNames) {
+				foreach (source; methodNames) {
+					app.formattedWrite(q"[
+	@filter(Method.%1$s, Method.%2$s)
+	struct Test%3$s%4$sFilter(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;
+		mixin ImplementTest%3$s%4$sFilter;
+	}
+						]",	sink, source, sink.capitalize, sink == source ? `` : source.capitalize);
+				}
+			}
+			return app.data;
+		}());
+
+	mixin({
+			import std.algorithm : cartesianProduct;
+			import std.array : appender;
+			import std.string : capitalize;
+			import std.format : formattedWrite;
+			auto app = appender!string();
+			foreach (pair; cartesianProduct(methodNames[], methodNames[])) {
+				app.formattedWrite(q"[
+	@filter(Method.%1$s, Method.%2$s)]", pair[0], pair[1]);
+			}
+			app.put(q"[
+	struct UniversalTestFilter(alias Context, A...) {
+		mixin TestStage;
+		mixin Context!A;]");
+			foreach (pair; cartesianProduct(methodNames[], methodNames[])) {
+				app.formattedWrite(q"[
+		static if (inputMethod == Method.%1$s && outputMethod == Method.%2$s)
+			mixin ImplementTest%3$s%4$sFilter;]",
+					pair[0], pair[1], pair[0].capitalize, pair[0] == pair[1] ? `` : pair[1].capitalize);
+			}
+			app.put("\n\t}\n");
+			return app.data;
+		}());
+
 	string genStage(string filter, string suf)
 	{
 		import std.ascii : toUpper;
@@ -845,7 +1117,7 @@ version(unittest) {
 		return "pipe!Test" ~ cf ~ suf ~ "(Arg!Test" ~ cf ~ suf ~ "())";
 	}
 
-	string genChain(string filterList)
+	string genChain(DriveMode mode, string filterList)
 	{
 		import std.algorithm : map;
 		import std.array : join, split;
@@ -854,15 +1126,17 @@ version(unittest) {
 		if (filters.length > 2)
 			midstr = filters[1 .. $ - 1].map!(f => "." ~ genStage(f, "Filter")).join;
 		return genStage(filters[0], "Source")
+			~ ".drive!(DriveMode.s" ~ (mode == DriveMode.source ? "ource" : "ink") ~ ")"
 			~ midstr
 			~ "." ~ genStage(filters[$ - 1], "Sink") ~ ";";
 	}
 
-	void testChain(string filterlist, R)(R r)
+	void testChain(DriveMode mode, string filterlist, R)(R r)
 		if (isInputRange!R && is(ElementType!R : ulong))
 	{
 		auto input = r.map!(a => ulong(a)).array();
-		logf("Testing %s with %d elements", filterlist, input.length);
+		logf("Testing %s-driven %s with %d elements",
+			mode == DriveMode.source ? "source" : "sink", filterlist, input.length);
 		auto expectedOutput = input.dup;
 		auto filters = filterlist.split(",");
 		if (filters.length > 2) {
@@ -878,7 +1152,7 @@ version(unittest) {
 			outputArray[] = 0xbadc0ffee0ddf00d;
 			inputArray = input;
 			outputIndex = 0;
-			mixin(genChain(filterlist));
+			mixin(genChain(mode, filterlist));
 			auto len = min(outputIndex, expectedLength, input.length);
 			uint left = 8;
 			size_t all = 0;
@@ -896,7 +1170,7 @@ version(unittest) {
 				}
 			}
 			if (all > 0) {
-				logf("%s", genChain(filterlist));
+				logf("%s", genChain(mode, filterlist));
 				logf("total: %d differences", all);
 			}
 			assert(all == 0);
@@ -906,7 +1180,8 @@ version(unittest) {
 	void testChain(string filterlist)()
 	{
 		import std.range : iota;
-		testChain!filterlist(iota(0, 173447));
+		testChain!(DriveMode.sink, filterlist)(iota(0, 173447));
+		testChain!(DriveMode.source, filterlist)(iota(0, 173447));
 	}
 
 }
@@ -1099,6 +1374,7 @@ unittest {
 }
 
 unittest {
+	import std.concurrency : spawn;
 	// implicit adapters, alloc->push
 	testChain!`alloc,push`;
 	testChain!`alloc,push,push`;
@@ -1109,7 +1385,50 @@ unittest {
 
 unittest {
 	// implicit adapters, all in one pipeline
-	testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,peek`;
+	testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,alloc`;
+}
+
+unittest {
+	import std.typecons : tuple;
+	auto input = [ 31337UL ];
+	foreach (arg; tuple(Arg!TestPullSink(), Arg!TestPeekSink(), Arg!TestPushSink(), Arg!TestAllocSink())) {
+		inputArray = input;
+		outputArray.length = input.length;
+		outputIndex = 0;
+		pipe!UniversalTestSource(Arg!UniversalTestSource()).pipe!(arg.Stage)(arg);
+		assert(outputArray[0 .. outputIndex] == input[]);
+	}
+}
+
+unittest {
+	import std.typecons : tuple;
+	auto input = [ 31337UL ];
+	foreach (arg; tuple(Arg!TestPullSource(), Arg!TestPeekSource(), Arg!TestPushSource(), Arg!TestAllocSource())) {
+		inputArray = input;
+		outputArray.length = input.length;
+		outputIndex = 0;
+		pipe!(arg.Stage)(arg).pipe!UniversalTestSink(Arg!UniversalTestSink());
+		assert(outputArray[0 .. outputIndex] == input[]);
+	}
+}
+
+unittest {
+	import std.typecons : tuple;
+	auto input = [ 0UL ];
+	foreach (isource, sourcearg; tuple(Arg!TestPullSource(), Arg!TestPeekSource(),
+			Arg!TestPushSource(), Arg!TestAllocSource())) {
+		foreach (isink, sinkarg; tuple(Arg!TestPullSink(), Arg!TestPeekSink(),
+				Arg!TestPushSink(), Arg!TestAllocSink())) {
+			inputArray = input;
+			outputArray.length = input.length;
+			outputIndex = 0;
+			pipe!(sourcearg.Stage)(sourcearg)
+				.pipe!UniversalTestFilter(Arg!UniversalTestFilter())
+				.pipe!(sinkarg.Stage)(sinkarg);
+			// FIXME: this depends on the encoding being the same as in filterImpl()
+			assert(outputArray[0] == ((input[0] << 4) | (isink << 2) | isource));
+		}
+	}
 }
 
 unittest {
