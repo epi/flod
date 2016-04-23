@@ -22,6 +22,31 @@ private enum nullMethod = cast(Method) -1;
 struct MethodAttribute {
 	Method sinkMethod = nullMethod;
 	Method sourceMethod = nullMethod;
+pure nothrow @nogc const:
+	@property bool isActiveSource()
+	{
+		return sourceMethod == Method.push || sourceMethod == Method.alloc;
+	}
+	@property bool isPassiveSource()
+	{
+		return sourceMethod == Method.pull || sourceMethod == Method.peek;
+	}
+	@property bool isActiveSink()
+	{
+		return sinkMethod == Method.pull || sinkMethod == Method.peek;
+	}
+	@property bool isPassiveSink()
+	{
+		return sinkMethod == Method.push || sinkMethod == Method.alloc;
+	}
+	@property bool isDriver()
+	{
+		return (isActiveSource && !isPassiveSink) || (isActiveSink && !isPassiveSource);
+	}
+	@property bool isPassiveFilter()
+	{
+		return isPassiveSource && isPassiveSink;
+	}
 }
 
 private struct TypedMethodAttribute(SinkE, SourceE) {
