@@ -201,3 +201,53 @@ unittest {
 		.copy(app);
 	assert(app.data == "first line 42\nformatted 0000deadbeef line\n");
 }
+
+@sink(Method.pull)
+@sink(Method.peek)
+package struct ByElement(alias Context, A...) {
+	mixin Context!A;
+	private alias E = OutputElementType;
+
+	static if (inputMethod == Method.peek) {
+		void popFront()() { source.consume(1); }
+		@property E front()() { return source.peek(1)[0]; }
+		@property bool empty()() { return source.peek(1).length == 0; }
+	} else static if (inputMethod == Method.pull) {
+		private E[1] current_;
+		private bool empty_ = true;
+
+		@property bool empty()()
+		{
+			if (!empty_)
+				return false;
+			popFront();
+			return empty_;
+		}
+
+		@property E front()() { return current_[0]; }
+
+		void popFront()()
+		{
+			empty_ = source.pull(current_[]) != 1;
+		}
+	} else {
+		static assert(0);
+	}
+}
+
+unittest {
+	auto p = [10, 20, 30].pipe!ByElement;
+	assert(!p.empty);
+	assert(p.front == 10);
+	p.popFront();
+	assert(p.front == 20);
+}
+
+unittest {
+	import std.range : iota;
+	auto p = iota(42, 50).pipe!ByElement;
+	assert(!p.empty);
+	assert(p.front == 42);
+	p.popFront();
+	assert(p.front == 43);
+}
