@@ -405,18 +405,16 @@ private struct Schema(DriveMode mode, S...) {
 	}
 }
 
-private template testSchema(Sch, alias test) {
-	static if (is(Sch == Schema!A, A...))
-		enum testSchema = test!(Sch.LastStage);
-	else
-		enum testSchema = false;
-}
-
+///
 enum isSchema(P) =
-	   isDynamicArray!P || testSchema!(P, isPeekSource)
-	|| isInputRange!P || testSchema!(P, isPullSource)
-	|| testSchema!(P, isPushSource)
-	|| testSchema!(P, isAllocSource)
+	   isDynamicArray!P
+	|| isInputRange!P
+	|| {
+		static if (is(P == Schema!A, A...))
+			return isSource!(P.LastStage);
+		else
+			return false;
+	}()
 	|| is(P == FakeSchema);
 
 ///
