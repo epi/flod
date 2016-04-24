@@ -326,7 +326,8 @@ Params:
     Src = Type of schema object describing the previous stages.
     A   = Types of arguments passed to S's instance ctor.
 */
-private struct Schema(DriveMode mode, S...) {
+struct Schema(DriveMode mode, S...) {
+private:
 	import std.conv : to;
 	alias StageSpecSeq = S;
 	alias getStage(Z) = Z.Stage;
@@ -348,7 +349,7 @@ private struct Schema(DriveMode mode, S...) {
 	}
 
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
-	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
+	public auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
 		alias T = StageSpec!(NextStage, NextArgs);
 		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
@@ -363,9 +364,14 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	void run()()
+	/// Instantiates the pipeline and returns an input range that reads from the pipeline by element.
+	/// Bugs:
+	/// Fails to compile if there's a non-copyable stage in the pipeline.
+	public auto opSlice()()
 	{
-		create().run();
+		auto pl = pipe!ByElement();
+		pl.spawn();
+		return pl;
 	}
 
 	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
@@ -376,7 +382,7 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	private auto insertAdapters(const(AdapterInsertionInfo)[] info)()
+	auto insertAdapters(const(AdapterInsertionInfo)[] info)()
 	{
 		static if (info.length == 0) {
 			return this;
@@ -393,14 +399,14 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	private auto doCreate()()
+	auto doCreate()()
 	{
 		Pipeline!(driveMode, StageSeq) p;
 		construct(p);
 		return p;
 	}
 
-	auto create()()
+	package auto create()()
 	{
 		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
 		static if (adapters.length == 0)
@@ -1488,4 +1494,33 @@ unittest {
 		})
 		.pipe!TestPushSink(Arg!TestPushSink());
 	assert(outputArray[0 .. outputIndex] == iota(42UL, 1024).array());
+}
+
+unittest {
+	// Test Schema.opSlice
+	static void testInputRange(alias Source)()
+	{
+		inputArray = [ 42, 31337 ];
+		auto r = pipe!Source(Arg!Source())[];
+		assert(!r.empty);
+		assert(r.front == 42);
+		r.popFront();
+		assert(!r.empty);
+		assert(r.front == 31337);
+		r.popFront();
+		assert(r.empty);
+	}
+
+	testInputRange!TestPeekSource;
+	testInputRange!TestPullSource;
+	testInputRange!TestPushSource;
+	testInputRange!TestAllocSource;
+}
+
+unittest {
+	// Test opSlice + ByElement with some algorithms from Phobos
+	import std.algorithm : filter, map;
+	import std.array : array;
+	auto arr = [ 1, 14, 10, 19, 32, 5, 43 ].pipeFromArray[].map!(a => a + 1).filter!(a => a > 10).array;
+	assert(arr == [ 15, 11, 20, 33, 44 ]);
 }
