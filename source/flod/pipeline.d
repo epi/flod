@@ -143,9 +143,9 @@ version(unittest) {
 		auto outp = chooseOptimalMethods(inp);
 		auto outpb = chooseOptimalMethods!(Yes.bruteForce)(inp);
 		assert(outp == outpb, {
-				import std.experimental.logger : logf;
-				logf("bf:  %s", outpb);
-				logf("dyn: %s", outp);
+				import std.stdio : stderr;
+				stderr.writefln("bf:  %s", outpb);
+				stderr.writefln("dyn: %s", outp);
 				return str;
 			}());
 		return true;
@@ -338,7 +338,7 @@ private:
 	enum size_t length = S.length;
 	enum driveMode = mode;
 
-	alias ElementType = SourceElementType!(length - 1, StageSeq);
+	public alias ElementType = SourceElementType!(length - 1, StageSeq);
 
 	StageSpecSeq stages;
 
@@ -482,7 +482,6 @@ private:
 	}
 
 	alias TagSpecs = FilterTagAttributes!(0, StageSeq);
-	alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
 	static if (getFirstDriver(driveMode, methods) < methods.length)
@@ -540,6 +539,7 @@ public:
 
 	// The following are public just because they're used in mixin template Context.
 	// TODO: find a way to make them private to flod.pipeline.
+	public alias Metadata = .Metadata!TagSpecs;
 	public Tuple tup;
 	public Metadata metadata;
 
@@ -552,8 +552,8 @@ public:
 version(unittest) {
 	import std.algorithm : min, max, map, copy;
 	import std.conv : to;
-	import std.experimental.logger : logf, errorf;
 	import std.range : isInputRange, ElementType, array, take;
+	import std.stdio : stderr;
 	import std.string : split, toLower, startsWith, endsWith;
 
 	ulong[] inputArray;
@@ -1161,8 +1161,6 @@ version(unittest) {
 		if (isInputRange!R && is(ElementType!R : ulong))
 	{
 		auto input = r.map!(a => ulong(a)).array();
-		logf("Testing %s-driven %s with %d elements",
-			mode == DriveMode.source ? "source" : "sink", filterlist, input.length);
 		auto expectedOutput = input.dup;
 		auto filters = filterlist.split(",");
 		if (filters.length > 2) {
@@ -1183,21 +1181,23 @@ version(unittest) {
 			uint left = 8;
 			size_t all = 0;
 			if (outputIndex != min(expectedLength, input.length)) {
-				errorf("Output length is %d, expected %d", outputIndex, min(expectedLength, input.length));
+				stderr.writefln("Output length is %d, expected %d", outputIndex, min(expectedLength, input.length));
 				assert(0);
 			}
 			for (size_t i = 0; i < len; i++) {
 				if (expectedOutput[i] != outputArray[i]) {
 					if (left > 0) {
-						logf("expected[%d] != output[%d]: %x vs. %x", i, i, expectedOutput[i], outputArray[i]);
+						stderr.writefln(
+							"expected[%d] != output[%d]: %x vs. %x", i, i, expectedOutput[i], outputArray[i]);
 						--left;
 					}
 					all++;
 				}
 			}
 			if (all > 0) {
-				logf("%s", genChain(mode, filterlist));
-				logf("total: %d differences", all);
+				stderr.writefln("Test failed: %s-driven %s with %d elements",
+					mode == DriveMode.source ? "source" : "sink", filterlist, input.length);
+				stderr.writefln("total: %d differences", all);
 			}
 			assert(all == 0);
 		}
@@ -1229,189 +1229,155 @@ unittest {
 }
 
 unittest {
-	// compatible source-sink pairs
-	testChain!`peek,peek`;
-	testChain!`pull,pull`;
-	testChain!`push,push`;
-	testChain!`alloc,alloc`;
-}
+	import std.parallelism : taskPool;
 
-unittest {
-	// compatible, with 1 filter
-	testChain!`peek,peek,peek`;
-	testChain!`peek,peekPull,pull`;
-	testChain!`peek,peekPush,push`;
-	testChain!`peek,peekAlloc,alloc`;
-	testChain!`pull,pullPeek,peek`;
-	testChain!`pull,pull,pull`;
-	testChain!`pull,pullPush,push`;
-	testChain!`pull,pullAlloc,alloc`;
-	testChain!`push,pushPeek,peek`;
-	testChain!`push,pushPull,pull`;
-	testChain!`push,push,push`;
-	testChain!`push,pushAlloc,alloc`;
-	testChain!`alloc,allocPeek,peek`;
-	testChain!`alloc,allocPull,pull`;
-	testChain!`alloc,allocPush,push`;
-	testChain!`alloc,alloc,alloc`;
-}
+	auto tests = [
+		// compatible source-sink pairs
+		&testChain!`peek,peek`,
+		&testChain!`pull,pull`,
+		&testChain!`push,push`,
+		&testChain!`alloc,alloc`,
 
-unittest {
-	// just one active sink at the end
-	testChain!`peek,peek,peek,peek,peek`;
-	testChain!`peek,peek,peekPull,pull,pull`;
-	testChain!`pull,pull,pull,pull,pull`;
-	testChain!`pull,pull,pullPeek,peek,peek`;
-}
+		// compatible, with 1 filter
+		&testChain!`peek,peek,peek`,
+		&testChain!`peek,peekPull,pull`,
+		&testChain!`peek,peekPush,push`,
+		&testChain!`peek,peekAlloc,alloc`,
+		&testChain!`pull,pullPeek,peek`,
+		&testChain!`pull,pull,pull`,
+		&testChain!`pull,pullPush,push`,
+		&testChain!`pull,pullAlloc,alloc`,
+		&testChain!`push,pushPeek,peek`,
+		&testChain!`push,pushPull,pull`,
+		&testChain!`push,push,push`,
+		&testChain!`push,pushAlloc,alloc`,
+		&testChain!`alloc,allocPeek,peek`,
+		&testChain!`alloc,allocPull,pull`,
+		&testChain!`alloc,allocPush,push`,
+		&testChain!`alloc,alloc,alloc`,
 
-unittest {
-	// just one active source at the beginning
-	testChain!`push,push,push,push,push`;
-	testChain!`push,push,pushAlloc,alloc,alloc`;
-	testChain!`alloc,alloc,alloc,alloc,alloc`;
-	testChain!`alloc,alloc,allocPush,push,push`;
-}
+		// just one active sink at the end
+		&testChain!`peek,peek,peek,peek,peek`,
+		&testChain!`peek,peek,peekPull,pull,pull`,
+		&testChain!`pull,pull,pull,pull,pull`,
+		&testChain!`pull,pull,pullPeek,peek,peek`,
 
-unittest {
-	// convert passive source to active source, longer chains
-	testChain!`pull,pullPeek,peekAlloc,allocPush,push`;
-	testChain!`pull,pullPeek,peekPush,pushAlloc,alloc`;
-	testChain!`peek,peekPull,pullPush,pushAlloc,alloc`;
-	testChain!`peek,peekPull,pullAlloc,allocPush,push`;
-}
+		// just one active source at the beginning
+		&testChain!`push,push,push,push,push`,
+		&testChain!`push,push,pushAlloc,alloc,alloc`,
+		&testChain!`alloc,alloc,alloc,alloc,alloc`,
+		&testChain!`alloc,alloc,allocPush,push,push`,
 
-unittest {
-	// convert active source to passive source at stage 2, longer passive source chain
-	testChain!`push,pushPull,pull,pull,pullPeek,peek,peekPush,push,push`;
-}
+		// convert passive source to active source, longer chains
+		&testChain!`pull,pullPeek,peekAlloc,allocPush,push`,
+		&testChain!`pull,pullPeek,peekPush,pushAlloc,alloc`,
+		&testChain!`peek,peekPull,pullPush,pushAlloc,alloc`,
+		&testChain!`peek,peekPull,pullAlloc,allocPush,push`,
 
-unittest {
-	// convert active source to passive source at stage >2 (longer active source chain)
-	testChain!`push,push,pushPull,pull`;
-	testChain!`push,push,push,push,push,pushPull,pull`;
-	testChain!`push,push,pushAlloc,alloc,alloc,allocPeek,peek`;
-}
+		// convert active source to passive source at stage 2, longer passive source chain
+		&testChain!`push,pushPull,pull,pull,pullPeek,peek,peekPush,push,push`,
 
-unittest {
-	// multiple inverters
-	testChain!`alloc,allocPeek,peekPush,pushPull,pull`;
-	testChain!`alloc,alloc,alloc,allocPeek,peek,peekPush,push,pushPull,pull`;
-	testChain!`alloc,alloc,allocPeek,peekPush,pushPull,pull`;
-	testChain!`alloc,alloc,alloc,allocPeek,peekPush,pushPull,pullPush,push,pushAlloc,alloc,allocPush,pushPeek,peekAlloc,allocPull,pull`;
-}
+		// convert active source to passive source at stage >2 (longer active source chain)
+		&testChain!`push,push,pushPull,pull`,
+		&testChain!`push,push,push,push,push,pushPull,pull`,
+		&testChain!`push,push,pushAlloc,alloc,alloc,allocPeek,peek`,
 
-unittest {
-	// implicit adapters, pull->push
-	testChain!`pull,push`;
-	testChain!`pull,push,push`;
-	testChain!`pull,pushPeek,peek`;
-	testChain!`pull,pushPull,pull`;
-	testChain!`pull,pushAlloc,alloc`;
-}
+		// multiple inverters
+		&testChain!`alloc,allocPeek,peekPush,pushPull,pull`,
+		&testChain!`alloc,alloc,alloc,allocPeek,peek,peekPush,push,pushPull,pull`,
+		&testChain!`alloc,alloc,allocPeek,peekPush,pushPull,pull`,
+		&testChain!`alloc,alloc,alloc,allocPeek,peekPush,pushPull,pullPush,push,pushAlloc,alloc,allocPush,pushPeek,peekAlloc,allocPull,pull`,
 
-unittest {
-	// implicit adapters, pull->peek
-	testChain!`pull,peek`;
-	testChain!`pull,peekPush,push`;
-	testChain!`pull,peek,peek`;
-	testChain!`pull,peekPull,pull`;
-	testChain!`pull,peekAlloc,alloc`;
-}
+		// implicit adapters, pull->push
+		&testChain!`pull,push`,
+		&testChain!`pull,push,push`,
+		&testChain!`pull,pushPeek,peek`,
+		&testChain!`pull,pushPull,pull`,
+		&testChain!`pull,pushAlloc,alloc`,
 
-unittest {
-	// implicit adapters, pull->alloc
-	testChain!`pull,alloc`;
-	testChain!`pull,allocPush,push`;
-	testChain!`pull,allocPeek,peek`;
-	testChain!`pull,allocPull,pull`;
-	testChain!`pull,alloc,alloc`;
-}
+		// implicit adapters, pull->peek
+		&testChain!`pull,peek`,
+		&testChain!`pull,peekPush,push`,
+		&testChain!`pull,peek,peek`,
+		&testChain!`pull,peekPull,pull`,
+		&testChain!`pull,peekAlloc,alloc`,
 
-unittest {
-	// implicit adapters, push->pull
-	testChain!`push,pull`;
-	testChain!`push,pullPush,push`;
-	testChain!`push,pullAlloc,alloc`;
-	testChain!`push,pullPeek,peek`;
-	testChain!`push,pull,pull`;
-}
+		// implicit adapters, pull->alloc
+		&testChain!`pull,alloc`,
+		&testChain!`pull,allocPush,push`,
+		&testChain!`pull,allocPeek,peek`,
+		&testChain!`pull,allocPull,pull`,
+		&testChain!`pull,alloc,alloc`,
 
-unittest {
-	// implicit adapters, push->peek
-	testChain!`push,peek`;
-	testChain!`push,peekPush,push`;
-	testChain!`push,peekAlloc,alloc`;
-	testChain!`push,peek,peek`;
-	testChain!`push,peekPull,pull`;
-}
+		// implicit adapters, push->pull
+		&testChain!`push,pull`,
+		&testChain!`push,pullPush,push`,
+		&testChain!`push,pullAlloc,alloc`,
+		&testChain!`push,pullPeek,peek`,
+		&testChain!`push,pull,pull`,
 
-unittest {
-	// implicit adapters, push->alloc
-	testChain!`push,alloc`;
-	testChain!`push,allocPush,push`;
-	testChain!`push,allocPeek,peek`;
-	testChain!`push,allocPull,pull`;
-	testChain!`push,alloc,alloc`;
-}
+		// implicit adapters, push->peek
+		&testChain!`push,peek`,
+		&testChain!`push,peekPush,push`,
+		&testChain!`push,peekAlloc,alloc`,
+		&testChain!`push,peek,peek`,
+		&testChain!`push,peekPull,pull`,
 
-unittest {
-	// implicit adapters, peek->pull
-	testChain!`peek,pull`;
-	testChain!`peek,pullPush,push`;
-	testChain!`peek,pullAlloc,alloc`;
-	testChain!`peek,pullPeek,peek`;
-	testChain!`peek,pull,pull`;
-}
+		// implicit adapters, push->alloc
+		&testChain!`push,alloc`,
+		&testChain!`push,allocPush,push`,
+		&testChain!`push,allocPeek,peek`,
+		&testChain!`push,allocPull,pull`,
+		&testChain!`push,alloc,alloc`,
 
-unittest {
-	// implicit adapters, peek->push
-	testChain!`peek,push`;
-	testChain!`peek,push,push`;
-	testChain!`peek,pushAlloc,alloc`;
-	testChain!`peek,pushPeek,peek`;
-	testChain!`peek,pushPull,pull`;
-}
+		// implicit adapters, peek->pull
+		&testChain!`peek,pull`,
+		&testChain!`peek,pullPush,push`,
+		&testChain!`peek,pullAlloc,alloc`,
+		&testChain!`peek,pullPeek,peek`,
+		&testChain!`peek,pull,pull`,
 
-unittest {
-	// implicit adapters, peek->alloc
-	testChain!`peek,alloc`;
-	testChain!`peek,allocPush,push`;
-	testChain!`peek,allocPeek,peek`;
-	testChain!`peek,allocPull,pull`;
-	testChain!`peek,alloc,alloc`;
-}
+		// implicit adapters, peek->push
+		&testChain!`peek,push`,
+		&testChain!`peek,push,push`,
+		&testChain!`peek,pushAlloc,alloc`,
+		&testChain!`peek,pushPeek,peek`,
+		&testChain!`peek,pushPull,pull`,
 
-unittest {
-	// implicit adapters, alloc->peek
-	testChain!`alloc,peek`;
-	testChain!`alloc,peekPush,push`;
-	testChain!`alloc,peekAlloc,alloc`;
-	testChain!`alloc,peek,peek`;
-	testChain!`alloc,peekPull,pull`;
-}
+		// implicit adapters, peek->alloc
+		&testChain!`peek,alloc`,
+		&testChain!`peek,allocPush,push`,
+		&testChain!`peek,allocPeek,peek`,
+		&testChain!`peek,allocPull,pull`,
+		&testChain!`peek,alloc,alloc`,
 
-unittest {
-	// implicit adapters, alloc->pull
-	testChain!`alloc,pull`;
-	testChain!`alloc,pullPush,push`;
-	testChain!`alloc,pullAlloc,alloc`;
-	testChain!`alloc,pullPeek,peek`;
-	testChain!`alloc,pull,pull`;
-}
+		// implicit adapters, alloc->peek
+		&testChain!`alloc,peek`,
+		&testChain!`alloc,peekPush,push`,
+		&testChain!`alloc,peekAlloc,alloc`,
+		&testChain!`alloc,peek,peek`,
+		&testChain!`alloc,peekPull,pull`,
 
-unittest {
-	import std.concurrency : spawn;
-	// implicit adapters, alloc->push
-	testChain!`alloc,push`;
-	testChain!`alloc,push,push`;
-	testChain!`alloc,pushAlloc,alloc`;
-	testChain!`alloc,pushPeek,peek`;
-	testChain!`alloc,pushPull,pull`;
-}
+		// implicit adapters, alloc->pull
+		&testChain!`alloc,pull`,
+		&testChain!`alloc,pullPush,push`,
+		&testChain!`alloc,pullAlloc,alloc`,
+		&testChain!`alloc,pullPeek,peek`,
+		&testChain!`alloc,pull,pull`,
 
-unittest {
-	// implicit adapters, all in one pipeline
-	testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,alloc`;
+		// implicit adapters, alloc->push
+		&testChain!`alloc,push`,
+		&testChain!`alloc,push,push`,
+		&testChain!`alloc,pushAlloc,alloc`,
+		&testChain!`alloc,pushPeek,peek`,
+		&testChain!`alloc,pushPull,pull`,
+
+		// implicit adapters, all in one pipeline
+		&testChain!`alloc,push,peek,pull,alloc,peek,push,pull,peek,alloc,pull,push,alloc`
+	];
+	foreach (fun; taskPool.parallel(tests)) {
+		fun();
+	}
 }
 
 unittest {
