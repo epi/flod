@@ -525,6 +525,13 @@ package:
 	}
 
 public:
+	/// Input range interface, if the last stage supports it.
+	@property bool empty()() { return tup[$ - 1].empty; }
+	/// ditto
+	@property auto front()() { return tup[$ - 1].front; }
+	/// ditto
+	void popFront()() { tup[$ - 1].popFront(); }
+
 	// The following are public just because they're used in mixin template Context.
 	// TODO: find a way to make them private to flod.pipeline.
 	public Tuple tup;
