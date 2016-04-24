@@ -476,50 +476,53 @@ private:
 	alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
+	// Spawns secondary drivers, if any.
+	private void spawn(size_t i = 0)()
+	{
+		static if (methods[i].isPassiveFilter)
+			tup[i].spawn();
+		static if (i + 1 < StageSeq.length)
+			spawn!(i + 1)();
+	}
+
+	// Calls all secondary drivers for the last time to make sure they have completed.
+	private void stop(size_t i = 0)()
+	{
+		static if (methods[i].isPassiveFilter)
+			tup[i].stop();
+		static if (i + 1 < StageSeq.length)
+			stop!(i + 1)();
+	}
+
+	void run()()
+	{
+		spawn();
+		enum driver = getFirstDriver(driveMode, methods);
+		static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
+		tup[driver].run();
+		stop();
+	}
+
+package:
+	// shortcuts for unittests in this package
+	static if (methods[$ - 1].sourceMethod == Method.peek) {
+		alias ElementType = SourceElementType!LastStage;
+		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
+		void consume()(size_t n) { tup[$ - 1].consume(n); }
+	} else static if (methods[$ - 1].sourceMethod == Method.pull) {
+		alias ElementType = SourceElementType!LastStage;
+		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
+	}
+
+public:
+	// The following are public just because they're used in mixin template Context.
+	// TODO: find a way to make them private to flod.pipeline.
 	public Tuple tup;
 	public Metadata metadata;
 
 	public static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
 	{
 		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
-	}
-
-	static if (isPeekSource!(LastStage)) {
-		alias ElementType = SourceElementType!LastStage;
-		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
-		void consume()(size_t n) { tup[$ - 1].consume(n); }
-	} else static if (isPullSource!(LastStage)) {
-		alias ElementType = SourceElementType!LastStage;
-		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
-	} else {
-		// TODO: sink pipelines.
-
-		// Spawns secondary drivers, if any.
-		private void spawn(size_t i = 0)()
-		{
-			static if (methods[i].isPassiveFilter)
-				tup[i].spawn();
-			static if (i + 1 < StageSeq.length)
-				spawn!(i + 1)();
-		}
-
-		// Calls all secondary drivers for the last time to make sure they have completed.
-		private void stop(size_t i = 0)()
-		{
-			static if (methods[i].isPassiveFilter)
-				tup[i].stop();
-			static if (i + 1 < StageSeq.length)
-				stop!(i + 1)();
-		}
-
-		void run()()
-		{
-			spawn();
-			enum driver = getFirstDriver(driveMode, methods);
-			static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
-			tup[driver].run();
-			stop();
-		}
 	}
 }
 
