@@ -352,10 +352,15 @@ private struct Schema(DriveMode mode, S...) {
 	{
 		alias T = StageSpec!(NextStage, NextArgs);
 		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
-		static if (isSource!NextStage || isSink!FirstStage)
+		static if (isSink!FirstStage || isSource!NextStage) {
 			return result;
-		else
-			result.run();
+		} else {
+			auto pl = result.create();
+			static if (pl.isRunnable)
+				pl.run();
+			else
+				return pl;
+		}
 	}
 
 	void run()()
@@ -474,6 +479,11 @@ private:
 	alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
+	static if (getFirstDriver(driveMode, methods) < methods.length)
+		enum isRunnable = __traits(hasMember, tup[getFirstDriver(driveMode, methods)], "run");
+	else
+		enum isRunnable = false;
+
 	// Spawns secondary drivers, if any.
 	private void spawn(size_t i = 0)()
 	{
@@ -492,13 +502,15 @@ private:
 			stop!(i + 1)();
 	}
 
-	void run()()
-	{
-		spawn();
-		enum driver = getFirstDriver(driveMode, methods);
-		static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
-		tup[driver].run();
-		stop();
+	static if (isRunnable) {
+		void run()()
+		{
+			spawn();
+			enum driver = getFirstDriver(driveMode, methods);
+			static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
+			tup[driver].run();
+			stop();
+		}
 	}
 
 package:
