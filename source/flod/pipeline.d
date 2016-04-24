@@ -419,7 +419,7 @@ enum isSchema(P) =
 
 ///
 auto pipe(alias Stage, Args...)(auto ref Args args)
-	if (isSink!Stage || isSource!Stage)
+	if (isStage!Stage)
 {
 	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
 		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
