@@ -473,7 +473,7 @@ private:
 	}
 
 	alias TagSpecs = FilterTagAttributes!(0, StageSeq);
-	alias Metadata = .Metadata!TagSpecs;
+	public alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
 	public Tuple tup;
@@ -485,10 +485,12 @@ private:
 	}
 
 	static if (isPeekSource!(LastStage)) {
+	package:
 		alias ElementType = SourceElementType!LastStage;
 		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
 		void consume()(size_t n) { tup[$ - 1].consume(n); }
 	} else static if (isPullSource!(LastStage)) {
+	package:
 		alias ElementType = SourceElementType!LastStage;
 		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
 	} else {

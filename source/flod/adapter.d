@@ -209,6 +209,7 @@ struct DefaultPeekAllocAdapter(alias Context, A...) {
 	{
 		E[] ob;
 		for (;;) {
+			import std.algorithm : min;
 			auto ib = source.peek(minSliceSize);
 			if (ib.length == 0)
 				break;

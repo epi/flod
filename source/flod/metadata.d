@@ -11,6 +11,7 @@ import std.meta : AliasSeq, Filter, allSatisfy, anySatisfy, staticMap;
 import std.typecons : Tuple, tuple;
 
 import flod.traits;
+version(unittest) import flod.meta : Id;
 
 package enum TagOp { get, set }
 
