@@ -69,16 +69,26 @@ public:
 
 	this(this)
 	{
-		auto nb = allocator.allocate(buffer.length - peekOffset);
-		nb[0 .. allocOffset - peekOffset] = buffer[peekOffset .. allocOffset];
-		allocOffset -= peekOffset;
-		peekOffset = 0;
-		buffer = nb;
+		auto buflen = buffer.length - peekOffset;
+		if (!buflen) {
+			buffer = null;
+			allocOffset = 0;
+			peekOffset = 0;
+		} else {
+			auto nb = allocator.allocate(buflen);
+			auto datalen = allocOffset - peekOffset;
+			if (datalen)
+				nb[0 .. datalen] = buffer[peekOffset .. allocOffset];
+			allocOffset -= peekOffset;
+			peekOffset = 0;
+			buffer = nb;
+		}
 	}
 
 	~this()
 	{
 		allocator.deallocate(buffer);
+		buffer = null;
 	}
 
 	void opAssign(MovingBuffer rhs)
