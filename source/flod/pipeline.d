@@ -359,8 +359,10 @@ private:
 			auto pl = result.create();
 			static if (pl.isRunnable)
 				pl.run();
-			else
+			else {
+				pl.spawn();
 				return pl;
+			}
 		}
 	}
 
@@ -369,9 +371,7 @@ private:
 	/// Fails to compile if there's a non-copyable stage in the pipeline.
 	public auto opSlice()()
 	{
-		auto pl = pipe!ByElement();
-		pl.spawn();
-		return pl;
+		return pipe!ByElement();
 	}
 
 	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
@@ -401,12 +401,18 @@ private:
 
 	auto doCreate()()
 	{
-		// WTF: doesn't work if the source is a range that uses lambdas
-		//Pipeline!(driveMode, StageSeq) p;
-		// This, on the other hand, seems to work well
-		auto p = Pipeline!(driveMode, StageSeq).init;
-		construct(p);
-		return p;
+		static if (Pipeline!(driveMode, StageSeq).isRunnable) {
+			// WTF: doesn't work if the source is a range that uses lambdas
+			//Pipeline!(driveMode, StageSeq) p;
+			// This, on the other hand, seems to work well
+			auto p = Pipeline!(driveMode, StageSeq).init;
+			construct(p);
+			return p;
+		} else {
+			auto p = RefCountedPipeline!(Pipeline!(driveMode, StageSeq))(1);
+			construct(p.impl.pipeline);
+			return p;
+		}
 	}
 
 	package auto create()()
@@ -432,7 +438,7 @@ enum isSchema(P) =
 	|| is(P == FakeSchema);
 
 ///
-auto pipe(alias Stage, Args...)(auto ref Args args)
+auto pipe(alias Stage, DriveMode mode = DriveMode.sink, Args...)(auto ref Args args)
 	if (isStage!Stage)
 {
 	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
@@ -441,7 +447,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else {
 		alias T = StageSpec!(Stage, Args);
-		return Schema!(DriveMode.sink, T)(T(args));
+		return Schema!(mode, T)(T(args));
 	}
 }
 
@@ -540,6 +546,13 @@ public:
 	/// ditto
 	void popFront()() { tup[$ - 1].popFront(); }
 
+	/// Output range interface, if the last stage supports it.
+	void put(E)(const(E)[] e)
+	{
+		if (e.length)
+			tup[0].put(e);
+	}
+
 	// The following are public just because they're used in mixin template Context.
 	// TODO: find a way to make them private to flod.pipeline.
 	public alias Metadata = .Metadata!TagSpecs;
@@ -550,6 +563,60 @@ public:
 	{
 		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
 	}
+}
+
+// Pipelines that use fibers can't be moved, so a workaround
+// is to allocate them on the heap and return a refcounted wrapper.
+private struct RefCountedPipeline(Pipeline) {
+private:
+	import std.experimental.allocator.mallocator : Mallocator;
+	import std.experimental.allocator : make, dispose;
+
+	static struct Impl {
+		Pipeline pipeline;
+		uint refCount;
+	}
+	Impl* impl;
+
+	this(uint refs)
+	{
+		impl = Mallocator.instance.make!Impl;
+		impl.refCount = refs;
+	}
+
+public:
+	this(this)
+	{
+		if (impl)
+			++impl.refCount;
+	}
+
+	void opAssign()(RefCountedPipeline p) {	swap(this, p); }
+
+	~this()
+	{
+		if (impl) {
+			if (--impl.refCount == 0) {
+				impl.pipeline.stop();
+				Mallocator.instance.dispose(impl);
+				impl = null;
+			}
+		}
+	}
+
+	@property bool empty()() { return impl.pipeline.tup[$ - 1].empty; }
+	@property auto front()() { return impl.pipeline.front; }
+	void popFront()() { impl.pipeline.popFront(); }
+	void put(E)(const(E)[] e) { impl.pipeline.put(e); }
+
+package:
+	auto peek()(size_t n) { return impl.pipeline.peek(n); }
+	void consume()(size_t n) { impl.pipeline.consume(n); }
+	size_t pull(E)(E[] buf) { return impl.pipeline.pull(buf); }
+
+private:
+	void spawn()() { impl.pipeline.spawn(); }
+	enum isRunnable = Pipeline.isRunnable;
 }
 
 version(unittest) {
