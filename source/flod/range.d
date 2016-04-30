@@ -180,7 +180,6 @@ package auto pipeFromDelegate(E, alias fun)()
 }
 
 unittest {
-	import std.stdio : writeln;
 	int z = 2;
 	auto x = [10, 20, 30].map!(n => n + z);
 }
@@ -474,4 +473,53 @@ unittest {
 	assert(arr.byChunk(2).equal([[ 42, 41 ], [ 40, 39 ], [ 38, 37 ], [ 36 ]]));
 	int[3] buf;
 	assert(arr.byChunk(buf[]).equal([[ 42, 41, 40 ], [ 39, 38, 37 ], [ 36 ]]));
+}
+
+template OutputRangeSource(El = void) {
+	@source!El(Method.push)
+	package struct OutputRangeSource(alias Context, A...) {
+		mixin Context!A;
+
+		alias E = OutputElementType;
+
+		void put(const(E)[] elements)
+		{
+			sink.push(elements);
+		}
+	}
+}
+
+/// A pipe used to start a pipeline to be used as an output range.
+@property auto pass(E = void)()
+{
+	import flod.pipeline : DriveMode;
+	return .pipe!(OutputRangeSource!E, DriveMode.source);
+}
+
+/// ditto
+alias _ = pass;
+
+version(unittest) {
+	void testOutputRange(string r)()
+	{
+		import std.array : appender;
+		import std.format : formattedWrite;
+		import flod.adapter;
+		auto app = appender!string();
+		{
+			auto or = mixin(r);
+			or.formattedWrite("test %d\n", 42);
+			or.formattedWrite("%s line\n", "second");
+		}
+		assert(app.data == "test 42\nsecond line\n");
+	}
+}
+
+unittest {
+	testOutputRange!q{ pass!char.copy(app) };
+}
+
+unittest {
+	// test if this works also with more drivers
+	testOutputRange!q{ pass!char.peekAlloc.pullPush.copy(app) };
 }
