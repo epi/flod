@@ -390,3 +390,88 @@ EOF".to!T.byLine.equal([
 			].map!(to!T)));
 	}
 }
+
+@sink(Method.peek)
+private struct PeekByChunk(alias Context, A...) {
+	mixin Context!A;
+private:
+	alias E = InputElementType;
+
+	const(E)[] chunk;
+	size_t chunkSize;
+
+public:
+	this(size_t chunk_size)
+	{
+		chunkSize = chunk_size;
+		popFront();
+	}
+
+	@property bool empty()() { return chunk.length == 0; }
+
+	@property const(E)[] front()() { return chunk; }
+
+	void popFront()()
+	{
+		if (chunk.length)
+			source.consume(chunk.length);
+		if (chunkSize) {
+			chunk = source.peek(chunkSize);
+			if (chunk.length > chunkSize)
+				chunk.length = chunkSize;
+		} else {
+			chunk = source.peek(4096);
+		}
+	}
+}
+
+private template PullByChunk(E) {
+	@sink!E(Method.pull)
+	struct PullByChunk(alias Context, A...) {
+		mixin Context!A;
+	private:
+		alias E = InputElementType;
+
+		E[] chunk;
+
+	public:
+		this(E[] buffer)
+		{
+			chunk = buffer;
+			popFront();
+		}
+
+		@property bool empty()() { return chunk.length == 0; }
+
+		@property const(E)[] front()() { return chunk; }
+
+		void popFront()()
+		{
+			chunk.length = source.pull(chunk);
+		}
+	}
+}
+
+/**
+Returns a range that reads from the pipeline one chunk at a time.
+*/
+auto byChunk(S)(S schema, size_t chunk_size = 0)
+	if (isSchema!S)
+{
+	return schema.pipe!PeekByChunk(chunk_size);
+}
+
+/// ditto
+auto byChunk(S, E)(S schema, E[] buf)
+	if (isSchema!S)
+{
+	return schema.pipe!(PullByChunk!E)(buf);
+}
+
+///
+unittest {
+	auto arr = [ 42, 41, 40, 39, 38, 37, 36 ];
+	assert(arr.byChunk(2).equal([[ 42, 41 ], [ 40, 39 ], [ 38, 37 ], [ 36 ]]));
+	int[3] buf;
+	assert(arr.byChunk(buf[]).equal([[ 42, 41, 40 ], [ 39, 38, 37 ], [ 36 ]]));
+}
