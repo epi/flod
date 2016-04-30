@@ -35,12 +35,12 @@
 - [x] Can connect stages with incompatible interfaces (buffered vs. unbuffered, push vs. pull).
 - [x] Can read from input ranges and built-in arrays.
 - [x] Can write to output ranges.
-- [ ] Input range interface to read from a pipeline by element.
-- [ ] Input range interface to read from a pipeline by chunk.
-- [ ] Input range interface to read from a pipeline by line.
-- [ ] Output range interface (put to pipeline).
+- [x] Input range interface to read from a pipeline by element.
+- [x] Input range interface to read from a pipeline by chunk.
+- [x] Input range interface to read from a pipeline by line.
+- [x] Output range interface (put to pipeline).
 - [ ] Reading from and writing to files.
-- [ ] Metadata support.
+- [x] Metadata support.
 - [ ] Hints for best chunk size.
 - [ ] Stream sequences (e.g. archives of multiple files).
 - [ ] Multiplexing and demultiplexing.
@@ -76,6 +76,13 @@ There are several libraries in D and other languages which share some goals with
 - [RaftLib](http://www.raftlib.io/) – Jonathan Beard's C++ library for Stream Parallel Processing.
 
 ## Release history
+
+- v0.1.0 (2016-05-xx)
+  - Input range interface to read from pipeline by element, by line or by chunk.
+  - Output range interface to write to pipeline.
+  - Support for passing metadata down the pipeline.
+  - Stages are now allowed to implement multiple methods (sources, sinks) or method pairs
+    (filters). The actual method is chosen based on the methods supported by other stages.
 
 - v0.0.2 (2016-03-15)
   - Can use built-in arrays and input ranges as pipeline sources.
