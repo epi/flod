@@ -7,9 +7,12 @@
 module flod.range;
 
 import std.range : isInputRange, isOutputRange;
+import std.typecons : Flag, No;
 
 import flod.pipeline : pipe, isSchema;
 import flod.traits;
+
+version(unittest) import std.algorithm : equal, map, filter;
 
 private template ArraySource(E) {
 	@source!E(Method.peek)
@@ -46,10 +49,11 @@ unittest {
 
 private template RangeSource(R) {
 	import std.range : ElementType;
-	alias E = ElementType!R;
+	import std.traits;
+	alias E = Unqual!(ElementType!R);
 
 	@source!E(Method.pull)
-	struct RangeSource(alias Context, A...) {
+	static struct RangeSource(alias Context, A...) {
 		mixin Context!A;
 		private R range;
 
@@ -176,8 +180,6 @@ package auto pipeFromDelegate(E, alias fun)()
 }
 
 unittest {
-	import std.algorithm : map;
-	import std.stdio : writeln;
 	int z = 2;
 	auto x = [10, 20, 30].map!(n => n + z);
 }
@@ -200,4 +202,324 @@ unittest {
 		})
 		.copy(app);
 	assert(app.data == "first line 42\nformatted 0000deadbeef line\n");
+}
+
+@sink(Method.pull)
+@sink(Method.peek)
+package struct ByElement(alias Context, A...) {
+	mixin Context!A;
+	private alias E = OutputElementType;
+
+	static if (inputMethod == Method.peek) {
+		void popFront()() { source.consume(1); }
+		@property E front()() { return source.peek(1)[0]; }
+		@property bool empty()() { return source.peek(1).length == 0; }
+	} else static if (inputMethod == Method.pull) {
+		private E[1] current_;
+		private bool empty_ = true;
+
+		@property bool empty()()
+		{
+			if (!empty_)
+				return false;
+			popFront();
+			return empty_;
+		}
+
+		@property E front()() { return current_[0]; }
+
+		void popFront()()
+		{
+			empty_ = source.pull(current_[]) != 1;
+		}
+	} else {
+		static assert(0);
+	}
+}
+
+unittest {
+	auto p = [10, 20, 30].pipe!ByElement;
+	assert(!p.empty);
+	assert(p.front == 10);
+	p.popFront();
+	assert(p.front == 20);
+}
+
+unittest {
+	import std.range : iota;
+	auto p = iota(42, 50).pipe!ByElement;
+	assert(!p.empty);
+	assert(p.front == 42);
+	p.popFront();
+	assert(p.front == 43);
+}
+
+package template Splitter(size_t peekStep = 128) {
+	@sink(Method.peek)
+	struct Splitter(alias Context, A...) {
+		mixin Context!A;
+	private:
+		import std.meta : AliasSeq;
+		import std.traits : isSomeChar, isIntegral, Unqual;
+
+		static if (isSomeChar!InputElementType)
+			alias Char = Unqual!InputElementType;
+		else static if (isIntegral!InputElementType && InputElementType.sizeof <= 4)
+			alias Char = AliasSeq!(void, char, wchar, void, dchar)[InputElementType.sizeof];
+		static assert(is(Char),
+			"Only streams of chars or bytes can be read by line, not " ~ InputElementType.stringof);
+
+		const(Char)[] line;
+		immutable(Char)[] separator;
+		bool keepSeparator;
+
+		public this(Separator)(typeof(null) dummy, Separator separator, bool keep)
+		{
+			// TODO: convert separator to array without GC allocation
+			// TODO: optimize for single-char separator
+			import std.conv : to;
+			this.keepSeparator = keep;
+			this.separator = separator.to!(typeof(this.separator));
+			next();
+		}
+
+		void next()()
+		{
+			if (line.length)
+				source.consume(line.length);
+			line = cast(typeof(line)) source.peek(peekStep);
+			for (size_t i = 0; ; i++) {
+				if (line.length - i < separator.length) {
+					line = cast(typeof(line)) source.peek(line.length + peekStep);
+					if (line.length - i < separator.length) {
+						separator = null;
+						if (line.length == 0)
+							line = null;
+						return; // we've read everything, and haven't found separator
+					}
+				}
+				if (line[i .. i + separator.length] == separator[]) {
+					line = line[0 .. i + separator.length];
+					return;
+				}
+			}
+		}
+
+	public:
+		@property bool empty()()
+		{
+			return line is null;
+		}
+
+		@property const(Char)[] front()()
+		{
+			return keepSeparator ? line : line[0 .. $ - separator.length];
+		}
+
+		void popFront()()
+		{
+			if (separator.length)
+				next();
+			else
+				line = null;
+		}
+	}
+}
+
+unittest {
+	import std.string : representation;
+	assert("Zażółć gęślą jaźń".pipe!(Splitter!3)(null, ' ', true)
+		.equal(["Zażółć ", "gęślą ", "jaźń"]));
+	assert("Zażółć gęślą jaźń".representation.pipe!(Splitter!3)(null, ' ', true)
+		.equal(["Zażółć ", "gęślą ", "jaźń"]));
+	assert("Zażółć gęślą jaźń "w.pipe!(Splitter!5)(null, " "d, true)
+		.equal(["Zażółć "w, "gęślą "w, "jaźń "w]));
+	// map and filter decode the string into a sequence of dchars
+	assert("여보세요 세계".map!"a".filter!(a => true).pipe!(Splitter!2)(null, " ", false)
+		.equal(["여보세요"d, "세계"d]));
+	assert("Foo\r\nBar\r\nBaz\r\r\n\r\n".pipe!(Splitter!4)(null, "\r\n"w, false)
+		.equal(["Foo", "Bar", "Baz\r", ""]));
+}
+
+/**
+Returns a range that reads from the pipeline one line at a time.
+
+Allowed input element types are built-in character and integer types. The stream is interpreted
+as UTF-8, UTF-16 or UTF-32 according to the input element size.
+Range elements are arrays of respective built-in character types.
+
+Each `front` is valid only until `popFront` is called. If retention is needed,
+a copy must be made using e.g. `idup` or `to!string`.
+*/
+auto byLine(S, Terminator)(S schema, Terminator terminator = '\n',
+	Flag!"keepTerminator" keep_terminator = No.keepTerminator)
+	if (isSchema!S)
+{
+	return schema.pipe!(Splitter!())(null, terminator, keep_terminator);
+}
+
+///
+unittest {
+	assert("first\nsecond\nthird\n".byLine.equal(["first", "second", "third"]));
+}
+
+unittest {
+	// For arrays of chars byLine should just give slices of the original array.
+	// This is not a part of the API, but an implementation detail with positive effect
+	// on performance.
+	auto line = "just one line";
+	assert(line.byLine.front is line);
+
+}
+
+unittest {
+	import std.conv : to;
+	import std.meta : AliasSeq;
+	foreach (T; AliasSeq!(string, wstring, dstring)) {
+		assert(q"EOF
+Prześliczna dzieweczka na spacer raz szła
+Gdy noc ją złapała wietrzysta i zła
+Być może przestraszył by ziąb i mrok ją
+Lecz miałą wszak mufkę prześliczną swą
+EOF".to!T.byLine.equal([
+				"Prześliczna dzieweczka na spacer raz szła",
+				"Gdy noc ją złapała wietrzysta i zła",
+				"Być może przestraszył by ziąb i mrok ją",
+				"Lecz miałą wszak mufkę prześliczną swą",
+			].map!(to!T)));
+	}
+}
+
+@sink(Method.peek)
+private struct PeekByChunk(alias Context, A...) {
+	mixin Context!A;
+private:
+	alias E = InputElementType;
+
+	const(E)[] chunk;
+	size_t chunkSize;
+
+public:
+	this(size_t chunk_size)
+	{
+		chunkSize = chunk_size;
+		popFront();
+	}
+
+	@property bool empty()() { return chunk.length == 0; }
+
+	@property const(E)[] front()() { return chunk; }
+
+	void popFront()()
+	{
+		if (chunk.length)
+			source.consume(chunk.length);
+		if (chunkSize) {
+			chunk = source.peek(chunkSize);
+			if (chunk.length > chunkSize)
+				chunk.length = chunkSize;
+		} else {
+			chunk = source.peek(4096);
+		}
+	}
+}
+
+private template PullByChunk(E) {
+	@sink!E(Method.pull)
+	struct PullByChunk(alias Context, A...) {
+		mixin Context!A;
+	private:
+		alias E = InputElementType;
+
+		E[] chunk;
+
+	public:
+		this(E[] buffer)
+		{
+			chunk = buffer;
+			popFront();
+		}
+
+		@property bool empty()() { return chunk.length == 0; }
+
+		@property const(E)[] front()() { return chunk; }
+
+		void popFront()()
+		{
+			chunk.length = source.pull(chunk);
+		}
+	}
+}
+
+/**
+Returns a range that reads from the pipeline one chunk at a time.
+*/
+auto byChunk(S)(S schema, size_t chunk_size = 0)
+	if (isSchema!S)
+{
+	return schema.pipe!PeekByChunk(chunk_size);
+}
+
+/// ditto
+auto byChunk(S, E)(S schema, E[] buf)
+	if (isSchema!S)
+{
+	return schema.pipe!(PullByChunk!E)(buf);
+}
+
+///
+unittest {
+	auto arr = [ 42, 41, 40, 39, 38, 37, 36 ];
+	assert(arr.byChunk(2).equal([[ 42, 41 ], [ 40, 39 ], [ 38, 37 ], [ 36 ]]));
+	int[3] buf;
+	assert(arr.byChunk(buf[]).equal([[ 42, 41, 40 ], [ 39, 38, 37 ], [ 36 ]]));
+}
+
+template OutputRangeSource(El = void) {
+	@source!El(Method.push)
+	package struct OutputRangeSource(alias Context, A...) {
+		mixin Context!A;
+
+		alias E = OutputElementType;
+
+		void put(const(E)[] elements)
+		{
+			sink.push(elements);
+		}
+	}
+}
+
+/// A pipe used to start a pipeline to be used as an output range.
+@property auto pass(E = void)()
+{
+	import flod.pipeline : DriveMode;
+	return .pipe!(OutputRangeSource!E, DriveMode.source);
+}
+
+/// ditto
+alias _ = pass;
+
+version(unittest) {
+	void testOutputRange(string r)()
+	{
+		import std.array : appender;
+		import std.format : formattedWrite;
+		import flod.adapter;
+		auto app = appender!string();
+		{
+			auto or = mixin(r);
+			or.formattedWrite("test %d\n", 42);
+			or.formattedWrite("%s line\n", "second");
+		}
+		assert(app.data == "test 42\nsecond line\n");
+	}
+}
+
+unittest {
+	testOutputRange!q{ pass!char.copy(app) };
+}
+
+unittest {
+	// test if this works also with more drivers
+	testOutputRange!q{ pass!char.peekAlloc.pullPush.copy(app) };
 }

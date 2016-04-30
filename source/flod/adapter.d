@@ -84,25 +84,30 @@ auto peekPull(S)(auto ref S schema)
 @filter(Method.pull, Method.push)
 struct DefaultPullPushAdapter(alias Context, A...) {
 	mixin Context!A;
-	size_t chunkSize;
-
+	import std.experimental.allocator.mallocator : Mallocator;
+	import std.exception : enforce;
 	static assert(is(InputElementType == OutputElementType));
 	private alias E = InputElementType;
 
+	private E[] buf;
+
 	this(size_t chunkSize)
 	{
-		this.chunkSize = chunkSize;
+		buf = cast(E[]) enforce(Mallocator.instance.allocate(chunkSize * E.sizeof));
+	}
+
+	~this()
+	{
+		Mallocator.instance.deallocate(buf);
 	}
 
 	void run()()
 	{
-		import core.stdc.stdlib : alloca;
-		auto buf = (cast(E*) alloca(E.sizeof * chunkSize))[0 .. chunkSize];
 		for (;;) {
 			size_t inp = source.pull(buf[]);
 			if (inp == 0)
 				break;
-			if (sink.push(buf[0 .. inp]) < chunkSize)
+			if (sink.push(buf[0 .. inp]) < inp)
 				break;
 		}
 	}

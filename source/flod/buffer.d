@@ -69,7 +69,32 @@ public:
 
 	this(this)
 	{
-		assert(buffer == null);
+		auto buflen = buffer.length - peekOffset;
+		if (!buflen) {
+			buffer = null;
+			allocOffset = 0;
+			peekOffset = 0;
+		} else {
+			auto nb = allocator.allocate(buflen);
+			auto datalen = allocOffset - peekOffset;
+			if (datalen)
+				nb[0 .. datalen] = buffer[peekOffset .. allocOffset];
+			allocOffset -= peekOffset;
+			peekOffset = 0;
+			buffer = nb;
+		}
+	}
+
+	~this()
+	{
+		allocator.deallocate(buffer);
+		buffer = null;
+	}
+
+	void opAssign(MovingBuffer rhs)
+	{
+		import std.algorithm : swap;
+		swap(this, rhs);
 	}
 
 	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
@@ -129,6 +154,29 @@ auto movingBuffer()
 {
 	import std.experimental.allocator.mallocator : Mallocator;
 	return movingBuffer(Mallocator.instance);
+}
+
+unittest {
+	auto b = movingBuffer();
+	auto xb = b.alloc!uint(10);
+	xb[0 .. 3] = [ 42, 1337, 6502 ];
+	b.commit!uint(3);
+	assert(b.peek!uint == [ 42, 1337, 6502 ]);
+	b.consume!uint(1);
+	assert(b.peek!uint == [ 1337, 6502 ]);
+	auto c = b;
+	assert(c.peek!uint == [ 1337, 6502 ]);
+	b.consume!uint(1);
+	assert(b.peek!uint == [ 6502 ]);
+	assert(c.peek!uint == [ 1337, 6502 ]);
+	auto xc = c.alloc!uint(10);
+	xc[0 .. 3] = [ 42, 17, 42 ];
+	c.commit!uint(3);
+	assert(b.peek!uint == [ 6502 ]);
+	assert(c.peek!uint == [ 1337, 6502, 42, 17, 42 ]);
+	c = movingBuffer();
+	assert(b.peek!uint == [ 6502 ]);
+	assert(c.peek!uint.length == 0);
 }
 
 version(unittest) {

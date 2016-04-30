@@ -34,4 +34,4 @@ License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
 */
 module flod;
 
-public import flod.range : copy;
+public import flod.range : copy, pass, _;

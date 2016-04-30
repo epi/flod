@@ -326,7 +326,8 @@ Params:
     Src = Type of schema object describing the previous stages.
     A   = Types of arguments passed to S's instance ctor.
 */
-private struct Schema(DriveMode mode, S...) {
+struct Schema(DriveMode mode, S...) {
+private:
 	import std.conv : to;
 	alias StageSpecSeq = S;
 	alias getStage(Z) = Z.Stage;
@@ -337,7 +338,7 @@ private struct Schema(DriveMode mode, S...) {
 	enum size_t length = S.length;
 	enum driveMode = mode;
 
-	alias ElementType = SourceElementType!(length - 1, StageSeq);
+	public alias ElementType = SourceElementType!(length - 1, StageSeq);
 
 	StageSpecSeq stages;
 
@@ -348,19 +349,29 @@ private struct Schema(DriveMode mode, S...) {
 	}
 
 	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
-	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
+	public auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
 		alias T = StageSpec!(NextStage, NextArgs);
 		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
-		static if (isSource!NextStage || isSink!FirstStage)
+		static if (isSink!FirstStage || isSource!NextStage) {
 			return result;
-		else
-			result.run();
+		} else {
+			auto pl = result.create();
+			static if (pl.isRunnable)
+				pl.run();
+			else {
+				pl.spawn();
+				return pl;
+			}
+		}
 	}
 
-	void run()()
+	/// Instantiates the pipeline and returns an input range that reads from the pipeline by element.
+	/// Bugs:
+	/// Fails to compile if there's a non-copyable stage in the pipeline.
+	public auto opSlice()()
 	{
-		create().run();
+		return pipe!ByElement();
 	}
 
 	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
@@ -371,7 +382,7 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	private auto insertAdapters(const(AdapterInsertionInfo)[] info)()
+	auto insertAdapters(const(AdapterInsertionInfo)[] info)()
 	{
 		static if (info.length == 0) {
 			return this;
@@ -388,14 +399,23 @@ private struct Schema(DriveMode mode, S...) {
 		}
 	}
 
-	private auto doCreate()()
+	auto doCreate()()
 	{
-		Pipeline!(driveMode, StageSeq) p;
-		construct(p);
-		return p;
+		static if (Pipeline!(driveMode, StageSeq).isRunnable) {
+			// WTF: doesn't work if the source is a range that uses lambdas
+			//Pipeline!(driveMode, StageSeq) p;
+			// This, on the other hand, seems to work well
+			auto p = Pipeline!(driveMode, StageSeq).init;
+			construct(p);
+			return p;
+		} else {
+			auto p = RefCountedPipeline!(Pipeline!(driveMode, StageSeq))(1);
+			construct(p.impl.pipeline);
+			return p;
+		}
 	}
 
-	auto create()()
+	package auto create()()
 	{
 		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
 		static if (adapters.length == 0)
@@ -405,23 +425,21 @@ private struct Schema(DriveMode mode, S...) {
 	}
 }
 
-private template testSchema(Sch, alias test) {
-	static if (is(Sch == Schema!A, A...))
-		enum testSchema = test!(Sch.LastStage);
-	else
-		enum testSchema = false;
-}
-
+///
 enum isSchema(P) =
-	   isDynamicArray!P || testSchema!(P, isPeekSource)
-	|| isInputRange!P || testSchema!(P, isPullSource)
-	|| testSchema!(P, isPushSource)
-	|| testSchema!(P, isAllocSource)
+	   isDynamicArray!P
+	|| isInputRange!P
+	|| {
+		static if (is(P == Schema!A, A...))
+			return isSource!(P.LastStage);
+		else
+			return false;
+	}()
 	|| is(P == FakeSchema);
 
 ///
-auto pipe(alias Stage, Args...)(auto ref Args args)
-	if (isSink!Stage || isSource!Stage)
+auto pipe(alias Stage, DriveMode mode = DriveMode.sink, Args...)(auto ref Args args)
+	if (isStage!Stage)
 {
 	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
 		return pipeFromArray(args[0]).pipe!Stage(args[1 .. $]);
@@ -429,7 +447,7 @@ auto pipe(alias Stage, Args...)(auto ref Args args)
 		return pipeFromInputRange(args[0]).pipe!Stage(args[1 .. $]);
 	else {
 		alias T = StageSpec!(Stage, Args);
-		return Schema!(DriveMode.sink, T)(T(args));
+		return Schema!(mode, T)(T(args));
 	}
 }
 
@@ -473,47 +491,32 @@ private:
 	}
 
 	alias TagSpecs = FilterTagAttributes!(0, StageSeq);
-	public alias Metadata = .Metadata!TagSpecs;
 	alias Tuple = StageTypeTuple!0.Tuple;
 
-	public Tuple tup;
-	public Metadata metadata;
+	static if (getFirstDriver(driveMode, methods) < methods.length)
+		enum isRunnable = __traits(hasMember, tup[getFirstDriver(driveMode, methods)], "run");
+	else
+		enum isRunnable = false;
 
-	public static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
+	// Spawns secondary drivers, if any.
+	private void spawn(size_t i = 0)()
 	{
-		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
+		static if (methods[i].isPassiveFilter)
+			tup[i].spawn();
+		static if (i + 1 < StageSeq.length)
+			spawn!(i + 1)();
 	}
 
-	static if (isPeekSource!(LastStage)) {
-	package:
-		alias ElementType = SourceElementType!LastStage;
-		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
-		void consume()(size_t n) { tup[$ - 1].consume(n); }
-	} else static if (isPullSource!(LastStage)) {
-	package:
-		alias ElementType = SourceElementType!LastStage;
-		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
-	} else {
-		// TODO: sink pipelines.
+	// Calls all secondary drivers for the last time to make sure they have completed.
+	private void stop(size_t i = 0)()
+	{
+		static if (methods[i].isPassiveFilter)
+			tup[i].stop();
+		static if (i + 1 < StageSeq.length)
+			stop!(i + 1)();
+	}
 
-		// Spawns secondary drivers, if any.
-		private void spawn(size_t i = 0)()
-		{
-			static if (methods[i].isPassiveFilter)
-				tup[i].spawn();
-			static if (i + 1 < StageSeq.length)
-				spawn!(i + 1)();
-		}
-
-		// Calls all secondary drivers for the last time to make sure they have completed.
-		private void stop(size_t i = 0)()
-		{
-			static if (methods[i].isPassiveFilter)
-				tup[i].stop();
-			static if (i + 1 < StageSeq.length)
-				stop!(i + 1)();
-		}
-
+	static if (isRunnable) {
 		void run()()
 		{
 			spawn();
@@ -523,6 +526,97 @@ private:
 			stop();
 		}
 	}
+
+package:
+	// shortcuts for unittests in this package
+	static if (methods[$ - 1].sourceMethod == Method.peek) {
+		alias ElementType = SourceElementType!LastStage;
+		const(ElementType)[] peek()(size_t n) { return tup[$ - 1].peek(n); }
+		void consume()(size_t n) { tup[$ - 1].consume(n); }
+	} else static if (methods[$ - 1].sourceMethod == Method.pull) {
+		alias ElementType = SourceElementType!LastStage;
+		size_t pull()(ElementType[] buf) { return tup[$ - 1].pull(buf); }
+	}
+
+public:
+	/// Input range interface, if the last stage supports it.
+	@property bool empty()() { return tup[$ - 1].empty; }
+	/// ditto
+	@property auto front()() { return tup[$ - 1].front; }
+	/// ditto
+	void popFront()() { tup[$ - 1].popFront(); }
+
+	/// Output range interface, if the last stage supports it.
+	void put(E)(const(E)[] e)
+	{
+		if (e.length)
+			tup[0].put(e);
+	}
+
+	// The following are public just because they're used in mixin template Context.
+	// TODO: find a way to make them private to flod.pipeline.
+	public alias Metadata = .Metadata!TagSpecs;
+	public Tuple tup;
+	public Metadata metadata;
+
+	public static ref Pipeline outer(size_t thisIndex)(ref StageType!thisIndex thisref) nothrow @trusted
+	{
+		return *(cast(Pipeline*) (cast(void*) &thisref - Pipeline.init.tup[thisIndex].offsetof));
+	}
+}
+
+// Pipelines that use fibers can't be moved, so a workaround
+// is to allocate them on the heap and return a refcounted wrapper.
+private struct RefCountedPipeline(Pipeline) {
+private:
+	import std.experimental.allocator.mallocator : Mallocator;
+	import std.experimental.allocator : make, dispose;
+
+	static struct Impl {
+		Pipeline pipeline;
+		uint refCount;
+	}
+	Impl* impl;
+
+	this(uint refs)
+	{
+		impl = Mallocator.instance.make!Impl;
+		impl.refCount = refs;
+	}
+
+public:
+	this(this)
+	{
+		if (impl)
+			++impl.refCount;
+	}
+
+	void opAssign()(RefCountedPipeline p) {	swap(this, p); }
+
+	~this()
+	{
+		if (impl) {
+			if (--impl.refCount == 0) {
+				impl.pipeline.stop();
+				Mallocator.instance.dispose(impl);
+				impl = null;
+			}
+		}
+	}
+
+	@property bool empty()() { return impl.pipeline.tup[$ - 1].empty; }
+	@property auto front()() { return impl.pipeline.front; }
+	void popFront()() { impl.pipeline.popFront(); }
+	void put(E)(const(E)[] e) { impl.pipeline.put(e); }
+
+package:
+	auto peek()(size_t n) { return impl.pipeline.peek(n); }
+	void consume()(size_t n) { impl.pipeline.consume(n); }
+	size_t pull(E)(E[] buf) { return impl.pipeline.pull(buf); }
+
+private:
+	void spawn()() { impl.pipeline.spawn(); }
+	enum isRunnable = Pipeline.isRunnable;
 }
 
 version(unittest) {
@@ -1436,4 +1530,33 @@ unittest {
 		})
 		.pipe!TestPushSink(Arg!TestPushSink());
 	assert(outputArray[0 .. outputIndex] == iota(42UL, 1024).array());
+}
+
+unittest {
+	// Test Schema.opSlice
+	static void testInputRange(alias Source)()
+	{
+		inputArray = [ 42, 31337 ];
+		auto r = pipe!Source(Arg!Source())[];
+		assert(!r.empty);
+		assert(r.front == 42);
+		r.popFront();
+		assert(!r.empty);
+		assert(r.front == 31337);
+		r.popFront();
+		assert(r.empty);
+	}
+
+	testInputRange!TestPeekSource;
+	testInputRange!TestPullSource;
+	testInputRange!TestPushSource;
+	testInputRange!TestAllocSource;
+}
+
+unittest {
+	// Test opSlice + ByElement with some algorithms from Phobos
+	import std.algorithm : filter, map;
+	import std.array : array;
+	auto arr = [ 1, 14, 10, 19, 32, 5, 43 ].pipeFromArray[].map!(a => a + 1).filter!(a => a > 10).array;
+	assert(arr == [ 15, 11, 20, 33, 44 ]);
 }
