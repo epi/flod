@@ -6,6 +6,8 @@
  */
 module flod.buffer;
 
+import std.typecons : Flag, Yes;
+
 private size_t alignUp(size_t n, size_t al)
 {
 	return (n + al - 1) & ~(al - 1);
@@ -236,7 +238,7 @@ private:
 	size_t peekOffset;
 	size_t peekableLength;
 	int fd = -1;
-	ulong wraps = 0;
+	bool grow;
 
 	@property size_t allocOffset() const pure nothrow
 	{
@@ -252,13 +254,21 @@ private:
 		assert(peekOffset <= buffer.length);
 	}
 
-	this(size_t initialSize)
+	this(size_t initialSize, Flag!"grow" grow)
 	{
 		if (!createFile())
 			return;
 		if (initialSize)
 			buffer = allocate(initialSize);
+		this.grow = grow;
 	}
+
+	this(this)
+	{
+		assert(buffer.length == 0);
+	}
+
+	@disable void opAssign(MmappedBuffer rhs);
 
 	bool createFile()()
 	{
@@ -357,10 +367,8 @@ public:
 		assert(peekableLength >= tn);
 		peekOffset += tn;
 		peekableLength -= tn;
-		if (peekOffset >= buffer.length) {
+		if (peekOffset >= buffer.length)
 			peekOffset -= buffer.length;
-			wraps++;
-		}
 	}
 
 	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
@@ -368,13 +376,13 @@ public:
 	{
 		auto typed = cast(T*) (buffer.ptr + allocOffset);
 		auto count = allocableLength / T.sizeof;
-		if (n <= count)
-			return typed[0 .. count];
-		// make sure at least T[n] will be available behind what's currently peekable
-		reallocate(peekOffset + peekableLength + n * T.sizeof);
-		typed = cast(T*) (buffer.ptr + allocOffset);
-		count = allocableLength / T.sizeof;
-		assert(count >= n); // TODO: let it return smaller chunk and the user will handle it
+		if (grow && count < n) {
+			// make sure at least T[n] will be available behind what's currently peekable
+			reallocate(peekOffset + peekableLength + n * T.sizeof);
+			typed = cast(T*) (buffer.ptr + allocOffset);
+			count = allocableLength / T.sizeof;
+			assert(count >= n); // TODO: let it return smaller chunk and the user will handle it
+		}
 		return typed[0 .. count];
 	}
 
@@ -388,9 +396,9 @@ public:
 	}
 }
 
-auto mmappedBuffer(size_t initialSize = 0)
+auto mmappedBuffer(size_t initialSize = 0, Flag!"grow" grow = Yes.grow)
 {
-	return MmappedBuffer(initialSize);
+	return MmappedBuffer(initialSize, grow);
 }
 
 unittest {
