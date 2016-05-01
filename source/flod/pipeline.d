@@ -203,7 +203,7 @@ struct FiberSwitch {
 private mixin template Context(PL, InputE, OutputE,
 	Method sink_method, Method source_method,
 	Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
-	size_t index, size_t driverIndex)
+	size_t index, size_t driver_index)
 {
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
@@ -213,6 +213,7 @@ private mixin template Context(PL, InputE, OutputE,
 	alias OutputElementType = OutputE;
 	enum inputMethod = sink_method;
 	enum outputMethod = source_method;
+	enum driverIndex = driver_index;
 
 	static if (passiveFilter) {
 		FiberSwitch _flod_switch;
