@@ -200,9 +200,7 @@ struct FiberSwitch {
 	}
 }
 
-private mixin template Context(PL, InputE, OutputE,
-	Method sink_method, Method source_method,
-	Flag!`passiveFilter` passiveFilter = Yes.passiveFilter,
+private mixin template Context(PL, InputE, OutputE, MethodAttribute methods,
 	size_t index, size_t driver_index)
 {
 	@property ref PL outer()() { return PL.outer!index(this); }
@@ -211,11 +209,11 @@ private mixin template Context(PL, InputE, OutputE,
 
 	alias InputElementType = InputE;
 	alias OutputElementType = OutputE;
-	enum inputMethod = sink_method;
-	enum outputMethod = source_method;
+	enum inputMethod = methods.sinkMethod;
+	enum outputMethod = methods.sourceMethod;
 	enum driverIndex = driver_index;
 
-	static if (passiveFilter) {
+	static if (methods.isPassiveFilter) {
 		FiberSwitch _flod_switch;
 
 		int yield()() { return _flod_switch.yield(); }
@@ -497,9 +495,7 @@ private:
 		alias Stage = StageSeq[i];
 		alias StageType = Stage!(Context, Pipeline,
 			SinkElementType!(i, StageSeq), SourceElementType!(i, StageSeq),
-			methods[i].sinkMethod, methods[i].sourceMethod,
-			methods[i].isPassiveFilter ? Yes.passiveFilter : No.passiveFilter,
-			i, getNextDriver(driveMode, i, methods));
+			methods[i], i, getNextDriver(driveMode, i, methods));
 	}
 
 	template StageTypeTuple(size_t i) {
