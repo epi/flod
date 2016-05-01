@@ -375,11 +375,29 @@ private:
 		return pipe!ByElement();
 	}
 
-	auto construct(size_t i = 0)(ref Pipeline!(driveMode, StageSeq) pipeline)
+	void construct(size_t i = size_t.max)(ref Pipeline!(driveMode, StageSeq) pipeline)
 	{
-		static if (i < StageSeq.length) {
+		static if (i == size_t.max) {
+			enum driver = getFirstDriver(pipeline.driveMode, pipeline.methods);
+			static if (driver < StageSeq.length)
+				construct!driver(pipeline);
+			else static if (pipeline.methods[$ - 1].isPassiveSource)
+				construct!(StageSeq.length - 1)(pipeline);
+		} else {
+			static assert (i < StageSeq.length);
+			static if (pipeline.methods[i].isActiveSink) {
+				static if (!pipeline.methods[i - 1].isPassiveFilter || pipeline.driveMode == DriveMode.sink)
+					construct!(i - 1)(pipeline);
+			}
+			static if (pipeline.methods[i].isActiveSource) {
+				static if (!pipeline.methods[i + 1].isPassiveFilter || pipeline.driveMode == DriveMode.source)
+					construct!(i + 1)(pipeline);
+			}
+			static if (pipeline.methods[i].isPassiveFilter) {
+				enum nextdriver = getNextDriver(pipeline.driveMode, i, pipeline.methods);
+				construct!nextdriver(pipeline);
+			}
 			constructInPlace(pipeline.tup[i], stages[i].args);
-			construct!(i + 1)(pipeline);
 		}
 	}
 
