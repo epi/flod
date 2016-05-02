@@ -263,13 +263,6 @@ private:
 		this.grow = grow;
 	}
 
-	this(this)
-	{
-		assert(buffer.length == 0);
-	}
-
-	@disable void opAssign(MmappedBuffer rhs);
-
 	bool createFile()()
 	{
 		static immutable path = "/dev/shm/flod-buffer-XXXXXX";
