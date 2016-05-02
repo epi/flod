@@ -10,7 +10,6 @@ import std.meta : AliasSeq, staticMap;
 import std.range : isDynamicArray, isInputRange;
 import std.typecons : Flag, Yes, No;
 
-import flod.meta : NonCopyable, str;
 import flod.metadata;
 import flod.range;
 import flod.traits;
@@ -159,17 +158,31 @@ unittest {
 	enum a = testOptimizeChain("pull,peek-pull/alloc-pull,peek");
 }
 
-struct FiberSwitch {
+/**
+Implements spawn(), stop() and yield() using core.Thread.Fiber.
+
+Useful as generic implementation for passive filters.
+*/
+mixin template FiberSwitch() {
 	import core.thread : Fiber;
-	Fiber fiber;
-	mixin NonCopyable;
+	Fiber _flod_fiber;
+
+	void spawn()()
+	{
+		import core.thread : Fiber;
+		assert(!_flod_fiber);
+		this._flod_fiber = new Fiber(
+			{
+				nextDriver.run();
+			}, 65536);
+	}
 
 	void stop()
 	{
-		auto f = this.fiber;
+		auto f = this._flod_fiber;
 		if (f) {
 			if (f.state == Fiber.State.HOLD) {
-				this.fiber = null;
+				this._flod_fiber = null;
 				f.call();
 			}
 			auto x = f.state;
@@ -180,22 +193,21 @@ struct FiberSwitch {
 	/**
 	Switch context.
 
-	Executes the other context up to the point where it also calls yield()
-	on the same FiberSwitch, or returns.
+	Executes the other context up to the point where it also calls yield() or returns.
 
 	Returns: non-zero if the other context finished execution.
 	*/
-	int yield()
+	private int yield()
 	{
-		if (fiber is null)
+		if (this._flod_fiber is null)
 			return 2;
-		if (fiber.state == Fiber.State.EXEC) {
+		if (this._flod_fiber.state == Fiber.State.EXEC) {
 			Fiber.yield();
-			return fiber is null;
+			return this._flod_fiber is null;
 		} else {
-			if (fiber.state == Fiber.State.HOLD)
-				fiber.call();
-			return fiber.state != Fiber.State.HOLD;
+			if (this._flod_fiber.state == Fiber.State.HOLD)
+				this._flod_fiber.call();
+			return this._flod_fiber.state != Fiber.State.HOLD;
 		}
 	}
 }
@@ -212,22 +224,7 @@ private mixin template Context(PL, InputE, OutputE, MethodAttribute methods,
 	alias OutputElementType = OutputE;
 	enum inputMethod = methods.sinkMethod;
 	enum outputMethod = methods.sourceMethod;
-
-	static if (methods.isPassiveFilter) {
-		FiberSwitch _flod_switch;
-
-		int yield()() { return _flod_switch.yield(); }
-		void spawn()()
-		{
-			import core.thread : Fiber;
-			assert(!_flod_switch.fiber);
-			_flod_switch.fiber = new Fiber(
-				{
-					nextDriver.run();
-				}, 65536);
-		}
-		void stop()() { _flod_switch.stop(); }
-	}
+	enum isPassiveFilter = methods.isPassiveFilter;
 
 	@property void tag(string key)(PL.Metadata.ValueType!key value)
 	{
@@ -316,11 +313,6 @@ Holds the information (both static and dynamic) needed to create a pipeline inst
 The static information includes the template aliases of all stages in the pipeline, as well as
 types of their constructor arguments.
 The dynamic information is the constructor arguments themselves.
-
-Params:
-	S   = The stage added as the last one to the schema.
-    Src = Type of schema object describing the previous stages.
-    A   = Types of arguments passed to S's instance ctor.
 */
 struct Schema(DriveMode mode, S...) {
 private:
@@ -411,7 +403,7 @@ private:
 	}
 
 public:
-	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
+	/// Appends NextStage to this schema.
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
 		alias T = StageSpec!(NextStage, NextArgs);
@@ -1007,6 +999,7 @@ version(unittest) {
 	}
 
 	mixin template ImplementTestPushPullFilter() {
+		mixin FiberSwitch;
 		ulong[] buffer;
 
 		size_t push(const(ulong)[] buf)
@@ -1032,6 +1025,7 @@ version(unittest) {
 	}
 
 	mixin template ImplementTestPushPeekFilter() {
+		mixin FiberSwitch;
 		ulong[] buffer;
 
 		size_t push(const(ulong)[] buf)
@@ -1093,6 +1087,7 @@ version(unittest) {
 	}
 
 	mixin template ImplementTestAllocPullFilter() {
+		mixin FiberSwitch;
 		ulong[] buffer;
 		size_t readOffset;
 		size_t writeOffset;
@@ -1129,6 +1124,7 @@ version(unittest) {
 	}
 
 	mixin template ImplementTestAllocPeekFilter() {
+		mixin FiberSwitch;
 		ulong[] buffer;
 		size_t readOffset;
 		size_t writeOffset;

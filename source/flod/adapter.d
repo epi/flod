@@ -6,8 +6,8 @@
  */
 module flod.adapter;
 
-import flod.pipeline;
-import flod.traits;
+import flod.pipeline : pipe, isSchema, FiberSwitch;
+import flod.traits : filter, Method;
 
 private template DefaultPullPeekAdapter(Buffer) {
 	@filter(Method.pull, Method.peek)
@@ -279,6 +279,8 @@ private template DefaultPushPullAdapter(Buffer) {
 			this.buffer = buffer;
 		}
 
+		mixin FiberSwitch;
+
 		size_t push(const(E)[] buf)
 		{
 			if (pushed.length > 0)
@@ -403,6 +405,8 @@ private template DefaultPushPeekAdapter(Buffer) {
 			this.buffer = buffer;
 		}
 
+		mixin FiberSwitch;
+
 		size_t push(const(E)[] buf)
 		{
 			size_t n = buf.length;
@@ -451,6 +455,7 @@ private template DefaultAllocPeekAdapter(Buffer) {
 			this.buffer = buffer;
 		}
 
+		mixin FiberSwitch;
 		mixin ImplementAllocCommit!E;
 		mixin ImplementPeekConsume!E;
 	}
@@ -489,6 +494,7 @@ private template DefaultAllocPullAdapter(Buffer) {
 			this.buffer = buffer;
 		}
 
+		mixin FiberSwitch;
 		mixin ImplementAllocCommit!E;
 
 		size_t pull(E[] buf)
