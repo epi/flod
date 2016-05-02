@@ -29,6 +29,7 @@ private template DefaultPullPeekAdapter(Buffer) {
 			if (ready.length >= size)
 				return ready;
 			auto chunk = buffer.alloc!E(size - ready.length);
+			assert(chunk.length >= size - ready.length);
 			size_t r = source.pull(chunk);
 			buffer.commit!E(r);
 			return buffer.peek!E();
@@ -137,10 +138,8 @@ struct DefaultPullAllocAdapter(alias Context, A...) {
 	{
 		E[] buf;
 		for (;;) {
-			if (!sink.alloc(buf, chunkSize)) {
-				import core.exception : OutOfMemoryError;
-				throw new OutOfMemoryError;
-			}
+			if (!sink.alloc(buf, chunkSize))
+				assert(0);
 			size_t inp = source.pull(buf[]);
 			if (inp == 0)
 				break;
@@ -219,10 +218,8 @@ struct DefaultPeekAllocAdapter(alias Context, A...) {
 			if (ib.length == 0)
 				break;
 			auto len = min(ib.length, maxSliceSize);
-			if (!sink.alloc(ob, len)) {
-				import core.exception : OutOfMemoryError;
-				throw new OutOfMemoryError();
-			}
+			if (!sink.alloc(ob, len))
+				assert(0);
 			ob[0 .. len] = ib[0 .. len];
 			size_t w = sink.commit(len);
 			source.consume(w);
@@ -249,10 +246,8 @@ struct DefaultPushAllocAdapter(alias Context, A...) {
 	size_t push(const(E)[] buf)
 	{
 		E[] ob;
-		if (!sink.alloc(ob, buf.length)) {
-			import core.exception : OutOfMemoryError;
-			throw new OutOfMemoryError();
-		}
+		if (!sink.alloc(ob, buf.length))
+			assert(0);
 		ob[0 .. buf.length] = buf[];
 		return sink.commit(buf.length);
 	}
@@ -328,10 +323,7 @@ private template DefaultPushPullAdapter(Buffer) {
 			// whatever's left in pushed, keep it in buffer for the next time pull() is called
 			while (pushed.length > 0) {
 				auto b = buffer.alloc!E(pushed.length);
-				if (b.length == 0) {
-					import core.exception : OutOfMemoryError;
-					throw new OutOfMemoryError();
-				}
+				assert(b.length >= pushed.length);
 				auto len = (b.length, pushed.length);
 				b[0 .. len] = pushed[0 .. len];
 				buffer.commit!E(len);
@@ -415,10 +407,7 @@ private template DefaultPushPeekAdapter(Buffer) {
 		{
 			size_t n = buf.length;
 			auto ob = buffer.alloc!E(n);
-			if (ob.length < n) {
-				import core.exception : OutOfMemoryError;
-				throw new OutOfMemoryError();
-			}
+			assert(ob.length >= n);
 			ob[0 .. n] = buf[0 .. n];
 			buffer.commit!E(n);
 			if (yield())
