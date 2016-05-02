@@ -206,12 +206,12 @@ private mixin template Context(PL, InputE, OutputE, MethodAttribute methods,
 	@property ref PL outer()() { return PL.outer!index(this); }
 	@property ref auto source()() { return outer.tup[index - 1]; }
 	@property ref auto sink()() { return outer.tup[index + 1]; }
+	@property ref auto nextDriver()() { return outer.tup[driver_index]; }
 
 	alias InputElementType = InputE;
 	alias OutputElementType = OutputE;
 	enum inputMethod = methods.sinkMethod;
 	enum outputMethod = methods.sourceMethod;
-	enum driverIndex = driver_index;
 
 	static if (methods.isPassiveFilter) {
 		FiberSwitch _flod_switch;
@@ -220,14 +220,11 @@ private mixin template Context(PL, InputE, OutputE, MethodAttribute methods,
 		void spawn()()
 		{
 			import core.thread : Fiber;
-			auto next_driver = &outer.tup[driverIndex];
-			if (!_flod_switch.fiber) {
-				static if (__traits(compiles, &next_driver.run!()))
-					auto runf = &next_driver.run!();
-				else
-					auto runf = &next_driver.run;
-				_flod_switch.fiber = new Fiber(runf, 65536);
-			}
+			assert(!_flod_switch.fiber);
+			_flod_switch.fiber = new Fiber(
+				{
+					nextDriver.run();
+				}, 65536);
 		}
 		void stop()() { _flod_switch.stop(); }
 	}
@@ -347,36 +344,10 @@ private:
 		}
 	}
 
-	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
-	public auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
-	{
-		alias T = StageSpec!(NextStage, NextArgs);
-		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
-		static if (isSink!FirstStage || isSource!NextStage) {
-			return result;
-		} else {
-			auto pl = result.create();
-			static if (pl.isRunnable)
-				pl.run();
-			else {
-				pl.spawn();
-				return pl;
-			}
-		}
-	}
-
-	/// Instantiates the pipeline and returns an input range that reads from the pipeline by element.
-	/// Bugs:
-	/// Fails to compile if there's a non-copyable stage in the pipeline.
-	public auto opSlice()()
-	{
-		return pipe!ByElement();
-	}
-
 	void construct(size_t i = size_t.max)(ref Pipeline!(driveMode, StageSeq) pipeline)
 	{
 		static if (i == size_t.max) {
-			enum driver = getFirstDriver(pipeline.driveMode, pipeline.methods);
+			enum driver = pipeline.primaryDriver;
 			static if (driver < StageSeq.length)
 				construct!driver(pipeline);
 			else static if (pipeline.methods[$ - 1].isPassiveSource)
@@ -391,11 +362,11 @@ private:
 				static if (!pipeline.methods[i + 1].isPassiveFilter || pipeline.driveMode == DriveMode.source)
 					construct!(i + 1)(pipeline);
 			}
-			static if (pipeline.methods[i].isPassiveFilter) {
-				enum nextdriver = getNextDriver(pipeline.driveMode, i, pipeline.methods);
-				construct!nextdriver(pipeline);
-			}
 			constructInPlace(pipeline.tup[i], stages[i].args);
+			static if (pipeline.methods[i].isPassiveFilter)
+				construct!(pipeline.nextDriver!i)(pipeline);
+			static if (pipeline.methods[i].isPassiveFilter)
+				pipeline.tup[i].spawn();
 		}
 	}
 
@@ -416,29 +387,45 @@ private:
 		}
 	}
 
-	auto doCreate()()
+	auto insertAdapters()()
 	{
-		static if (Pipeline!(driveMode, StageSeq).isRunnable) {
-			// WTF: doesn't work if the source is a range that uses lambdas
-			//Pipeline!(driveMode, StageSeq) p;
-			// This, on the other hand, seems to work well
-			auto p = Pipeline!(driveMode, StageSeq).init;
+		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
+		static if (adapters.length == 0)
+			return this;
+		else
+			return insertAdapters!adapters();
+	}
+
+	package auto instantiate()()
+	{
+		alias T = Pipeline!(driveMode, StageSeq);
+		static if (T.isRunnable) {
+			Pipeline!(driveMode, StageSeq) p;
 			construct(p);
-			return p;
+			p.run();
 		} else {
-			auto p = RefCountedPipeline!(Pipeline!(driveMode, StageSeq))(1);
+			auto p = RefCountedPipeline!T(1);
 			construct(p.impl.pipeline);
 			return p;
 		}
 	}
 
-	package auto create()()
+public:
+	/// Appends NextStage to this schema to be executed in the same thread as LastStage.
+	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
 	{
-		enum adapters = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods.buildListOfAdapters;
-		static if (adapters.length == 0)
-			return doCreate();
+		alias T = StageSpec!(NextStage, NextArgs);
+		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
+		static if (isSink!FirstStage || isSource!NextStage)
+			return result;
 		else
-			return insertAdapters!adapters().doCreate();
+			return result.insertAdapters.instantiate();
+	}
+
+	/// Instantiates the pipeline and returns an input range that reads from the pipeline by element.
+	auto opSlice()()
+	{
+		return pipe!ByElement();
 	}
 }
 
@@ -482,6 +469,8 @@ private:
 	alias LastStage = StageSeq[$ - 1];
 	enum methods = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods;
 	static assert(allCompatible(methods));
+	enum primaryDriver = getFirstDriver(driveMode, methods);
+	enum nextDriver(size_t i) = getNextDriver(driveMode, i, methods);
 
 	static bool allCompatible(in MethodAttribute[] methods)
 	{
@@ -513,17 +502,8 @@ private:
 	else
 		enum isRunnable = false;
 
-	// Spawns secondary drivers, if any.
-	private void spawn(size_t i = 0)()
-	{
-		static if (methods[i].isPassiveFilter)
-			tup[i].spawn();
-		static if (i + 1 < StageSeq.length)
-			spawn!(i + 1)();
-	}
-
 	// Calls all secondary drivers for the last time to make sure they have completed.
-	private void stop(size_t i = 0)()
+	void stop(size_t i = 0)()
 	{
 		static if (methods[i].isPassiveFilter)
 			tup[i].stop();
@@ -534,10 +514,8 @@ private:
 	static if (isRunnable) {
 		void run()()
 		{
-			spawn();
-			enum driver = getFirstDriver(driveMode, methods);
-			static assert(driver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
-			tup[driver].run();
+			static assert(primaryDriver < StageSeq.length, "Pipeline " ~ .str!(StageSeq) ~ " has no driver");
+			tup[primaryDriver].run();
 			stop();
 		}
 	}
@@ -680,8 +658,19 @@ version(unittest) {
 		@disable this(this);
 		@disable void opAssign(typeof(this));
 
-		// this is to ensure that construct() calls the right constructor for each stage
-		this(Arg!Stage arg) { this.arg = arg; this.arg.constructed = true; }
+		// this is to ensure that construct() calls the right constructor for each stage,
+		// in the right order.
+		this(Arg!Stage arg) { this.arg = arg; this.arg.constructed = true;
+			static if (inputMethod == Method.pull || inputMethod == Method.peek) {
+				static if (is(typeof(source.arg)))
+					assert(source.arg.constructed);
+			}
+			static if (outputMethod == Method.push || outputMethod == Method.alloc) {
+				static if (is(typeof(sink.arg)))
+					assert(sink.arg.constructed);
+			}
+		}
+
 		Arg!Stage arg;
 	}
 

@@ -38,7 +38,7 @@ package auto pipeFromArray(E)(const(E)[] array)
 
 unittest {
 	auto arr = [ 1, 2, 37, 98, 123, 12313 ];
-	auto pl = arr.pipeFromArray.create();
+	auto pl = arr.pipeFromArray.instantiate();
 	assert(pl.peek(1) == arr[]);
 	assert(pl.peek(123) == arr[]);
 	pl.consume(2);
@@ -88,7 +88,7 @@ unittest {
 	auto p = r.pipeFromInputRange;
 	static assert(isSchema!(typeof(p)));
 	static assert(is(p.ElementType == int));
-	auto pl = p.create();
+	auto pl = p.instantiate();
 	int[4] buf;
 	assert(pl.pull(buf[]) == 4);
 	assert(buf[] == [6, 7, 8, 9]);
@@ -103,7 +103,7 @@ unittest {
 	static assert( hasSlicing!(typeof(r)));
 	static assert(!hasLength!(typeof(r)));
 	static assert( isInfinite!(typeof(r)));
-	auto pl = r.pipeFromInputRange.create();
+	auto pl = r.pipeFromInputRange.instantiate();
 	int[5] buf;
 	assert(pl.pull(buf[]) == 5);
 	assert(buf[] == [0xdead, 0xdead, 0xdead, 0xdead, 0xdead]);
@@ -115,7 +115,7 @@ unittest {
 
 	auto r = generate({ int i = 0; return (){ return i++; }; }()).take(104);
 	static assert(!hasSlicing!(typeof(r)));
-	auto pl = r.pipeFromInputRange.create();
+	auto pl = r.pipeFromInputRange.instantiate();
 	int[5] buf;
 	assert(pl.pull(buf[]) == 5);
 	assert(buf[] == [0, 1, 2, 3, 4]);
@@ -360,7 +360,9 @@ auto byLine(S, Terminator)(S schema, Terminator terminator = '\n',
 
 ///
 unittest {
+	import flod.adapter : peekPush;
 	assert("first\nsecond\nthird\n".byLine.equal(["first", "second", "third"]));
+	assert("first\nsecond\nthird".peekPush.byLine.equal(["first", "second", "third"]));
 }
 
 unittest {
