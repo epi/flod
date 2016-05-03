@@ -56,6 +56,7 @@ private MethodAttribute[] chooseOptimalMethods(Flag!`bruteForce` brute_force = N
 					break;
 				ind[i] = 0;
 				if (i == stages.length - 1) {
+					import std.algorithm : map;
 					import std.range : enumerate, array;
 					return result.enumerate.map!(t => stages[t.index][t.value]).array();
 				}
@@ -101,6 +102,9 @@ private MethodAttribute[] chooseOptimalMethods(Flag!`bruteForce` brute_force = N
 version(unittest) {
 	MethodAttribute[][] methodAttributesFromString(string str)
 	{
+		import std.string : split;
+		import std.range : array;
+		import std.algorithm : map;
 		enum tr = [
 			"pull" : Method.pull,
 			"peek" : Method.peek,
