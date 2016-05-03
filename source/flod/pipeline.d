@@ -397,7 +397,10 @@ private:
 	{
 		alias T = Pipeline!(driveMode, StageSeq);
 		static if (T.isRunnable) {
-			Pipeline!(driveMode, StageSeq) p;
+			// WTF: doesn't work if the source is a range that uses lambdas
+			//Pipeline!(driveMode, StageSeq) p;
+			// This, on the other hand, seems to work well
+			auto p = Pipeline!(driveMode, StageSeq).init;
 			construct(p);
 			p.run();
 		} else {
