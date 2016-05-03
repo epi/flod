@@ -608,6 +608,7 @@ private:
 	ulong writeCount;
 	ulong readCount;
 	shared(ulong) stopAt;
+	size_t halfBufferSize;
 
 	void finalize(bool secondary)()
 	{
@@ -623,6 +624,7 @@ public:
 	this(size_t buffer_size)
 	{
 		import std.typecons : No;
+		halfBufferSize = buffer_size / 2;
 		buffer = mmappedBuffer(buffer_size, No.grow);
 		mutex = new Mutex;
 		peekSem = new Semaphore;
@@ -685,8 +687,10 @@ public:
 				ib = buffer.peek!E();
 			}
 			if (ib.length >= n || readCount + ib.length >= atomicLoad(stopAt)) {
+				if (ib.length > halfBufferSize)
+					ib = ib[0 .. halfBufferSize];
 				cache = ib;
-				cacheSize = cache.length;
+				cacheSize = ib.length;
 				return cache;
 			}
 			peekSem.wait();
