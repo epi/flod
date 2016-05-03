@@ -36,3 +36,4 @@ module flod;
 
 public import flod.range : copy, pass, byLine, byChunk;
 public import flod.file : read, write;
+public import flod.adapter : parallel;
