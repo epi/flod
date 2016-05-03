@@ -225,6 +225,7 @@ private mixin template Context(PL, InputE, OutputE, MethodAttribute methods,
 	enum inputMethod = methods.sinkMethod;
 	enum outputMethod = methods.sourceMethod;
 	enum isPassiveFilter = methods.isPassiveFilter;
+	enum driveMode = PL.driveMode;
 
 	@property void tag(string key)(PL.Metadata.ValueType!key value)
 	{
@@ -456,7 +457,7 @@ auto pipe(E, alias Dg)()
 /// A pipeline built based on schema S.
 struct Pipeline(DriveMode mode, S...) {
 private:
-	enum driveMode = mode;
+	public enum driveMode = mode;
 	alias StageSeq = S;
 	alias LastStage = StageSeq[$ - 1];
 	enum methods = [ staticMap!(getMethods, StageSeq) ].chooseOptimalMethods;
