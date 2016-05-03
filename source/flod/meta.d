@@ -102,13 +102,9 @@ auto moveIfNonCopyable(T, string file = __FILE__, int line = __LINE__)(auto ref 
 {
 	import std.conv : to;
 	static if (isCopyable!T) {
-		debug pragma(msg,
-			file ~ "(" ~ to!string(line) ~ "): copying " ~ str!T ~ " (size=" ~ to!string(t.sizeof) ~ ")");
 		return t;
 	} else {
 		import std.algorithm : move;
-		debug pragma(msg,
-			file ~ "(" ~ to!string(line) ~ "): moving " ~ str!T ~ " (size=" ~ to!string(t.sizeof) ~ ")");
 		return move(t);
 	}
 }

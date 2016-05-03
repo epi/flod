@@ -564,6 +564,7 @@ private struct RefCountedPipeline(Pipeline) {
 private:
 	import std.experimental.allocator.mallocator : Mallocator;
 	import std.experimental.allocator : make, dispose;
+	import core.memory : GC;
 
 	static struct Impl {
 		Pipeline pipeline;
@@ -574,6 +575,7 @@ private:
 	this(uint refs)
 	{
 		impl = Mallocator.instance.make!Impl;
+		GC.addRange(impl, Impl.sizeof, typeid(Impl));
 		impl.refCount = refs;
 	}
 
@@ -592,6 +594,7 @@ public:
 			if (--impl.refCount == 0) {
 				impl.pipeline.stop();
 				Mallocator.instance.dispose(impl);
+				GC.removeRange(impl);
 				impl = null;
 			}
 		}
