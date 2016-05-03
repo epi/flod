@@ -578,3 +578,174 @@ auto allocPush(S)(auto ref S schema)
 	import flod.buffer : movingBuffer;
 	return schema.allocPush(movingBuffer());
 }
+
+@filter(Method.alloc, Method.peek)
+private struct Parallel(alias Context, A...) {
+	mixin Context!A;
+private:
+	import core.atomic : atomicLoad, atomicStore;
+	import core.thread : Thread, Mutex;
+	import core.sync.condition : Condition;
+	import core.sync.semaphore : Semaphore;
+	import flod.buffer : MmappedBuffer, mmappedBuffer;
+	import flod.pipeline : DriveMode;
+
+	alias E = InputElementType;
+	static assert(is(E == OutputElementType));
+
+	MmappedBuffer buffer;
+	Mutex mutex;
+	Semaphore peekSem;
+	Semaphore allocSem;
+	Thread secondary;
+
+	// cache to avoid synchronized calls to buffer
+	size_t cacheSize;
+	const(E)[] cache;
+
+	// FIXME: This kludge is used to know when the input stream ends.
+	// Also, there's no way the sink can reliably tell the source it doesn't want more data.
+	ulong writeCount;
+	ulong readCount;
+	shared(ulong) stopAt;
+
+	void finalize(bool secondary)()
+	{
+		static if (driveMode == (secondary ? DriveMode.sink : DriveMode.source)) {
+			atomicStore(stopAt, writeCount);
+			peekSem.notify();
+		} else {
+			allocSem.notify();
+		}
+	}
+
+public:
+	this(size_t buffer_size)
+	{
+		import std.typecons : No;
+		buffer = mmappedBuffer(buffer_size, No.grow);
+		mutex = new Mutex;
+		peekSem = new Semaphore;
+		allocSem = new Semaphore;
+		atomicStore(stopAt, ulong.max);
+	}
+
+	void spawn()()
+	{
+		assert(!secondary);
+		secondary = new Thread(
+			{
+				nextDriver.run();
+				finalize!true();
+			}).start();
+	}
+
+	void stop()()
+	{
+		finalize!false();
+		secondary.join();
+	}
+
+	bool alloc()(ref E[] buf, size_t n)
+	{
+		for (;;) {
+			synchronized (mutex) {
+				buf = buffer.alloc!E(n);
+			}
+			if (buf.length >= n)
+				return true;
+			allocSem.wait();
+		}
+	}
+
+	size_t commit()(size_t n)
+	{
+		synchronized (mutex) {
+			buffer.commit!E(n);
+		}
+		writeCount += n;
+		peekSem.notify();
+		return n;
+	}
+
+	const(E)[] peek()(size_t n)
+	{
+		if (n < cache.length)
+			return cache;
+		for (;;) {
+			const(E)[] ib;
+			synchronized (mutex) {
+				if (cacheSize) {
+					size_t read = cacheSize - cache.length;
+					buffer.consume!E(read);
+					readCount += read;
+					cacheSize = 0;
+					allocSem.notify();
+				}
+				ib = buffer.peek!E();
+			}
+			if (ib.length >= n || readCount + ib.length >= atomicLoad(stopAt)) {
+				cache = ib;
+				cacheSize = cache.length;
+				return cache;
+			}
+			peekSem.wait();
+		}
+	}
+
+	void consume()(size_t n)
+	{
+		assert(n <= cache.length);
+		cache = cache[n .. $];
+	}
+}
+
+auto parallel(S)(S schema, size_t buffer_size = 65536)
+{
+	return schema.pipe!Parallel(buffer_size);
+}
+
+unittest {
+	import std.algorithm : equal;
+	import flod.range : byLine;
+	"foo\nbar\nbaz\n".parallel.byLine.equal([ "foo", "bar", "baz" ]);
+	"foo\nbar\nbaz\n".pushPeek.parallel.peekPush.byLine.equal([ "foo", "bar", "baz" ]);
+}
+
+unittest {
+	import std.algorithm : equal, stdcopy = copy;
+	import std.range : appender, iota, cycle, take;
+	import flod.range : copy, pass;
+	import flod.pipeline : pipe;
+
+	foreach (size; [ 1, 1023, 1024, 4096, 4097, 128 * 1024 - 15, 128 * 1024 ].cycle.take(70)) {
+		auto app = appender!(int[])();
+		iota(size).parallel.copy(app);
+		assert(iota(size).equal(app.data));
+		app.clear();
+		iota(size).parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.copy(app);
+		assert(iota(size).equal(app.data));
+		app.clear();
+		{
+			auto r = pass!int.parallel.copy(app);
+			iota(size).stdcopy(r);
+		}
+		assert(iota(size).equal(app.data));
+		app.clear();
+		{
+			auto r = pass!int.parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.copy(app);
+			iota(size).stdcopy(r);
+		}
+		assert(iota(size).equal(app.data));
+		app.clear();
+		// ideally, size should be accessible inside the lambda template arg.
+		// since it doesn't compile this way, we're passing it via a static var, which
+		// also must be shared, because the source will actually run in a background thread.
+		static shared(int) s_size;
+		s_size = size;
+		pipe!(int, (orange) {
+				iota(s_size).stdcopy(orange);
+			}).parallel.copy(app);
+		assert(iota(size).equal(app.data));
+	}
+}
