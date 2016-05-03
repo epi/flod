@@ -33,7 +33,7 @@ auto read(in char[] name)
 	return pipe!FileReader(name);
 }
 
-@sink!ubyte(Method.push)
+@sink(Method.push)
 private struct FileWriter(alias Context, A...) {
 	mixin Context!A;
 private:
@@ -42,7 +42,7 @@ private:
 public:
 	this(in char[] name) { file = File(name, "wb"); }
 
-	size_t push(const(ubyte)[] buf)
+	size_t push(const(InputElementType)[] buf)
 	{
 		file.rawWrite(buf);
 		return buf.length;
