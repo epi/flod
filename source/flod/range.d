@@ -254,7 +254,7 @@ unittest {
 	assert(p.front == 43);
 }
 
-package template Splitter(size_t peekStep = 128) {
+package template Splitter(Separator, size_t peekStep = 128) {
 	@sink(Method.peek)
 	struct Splitter(alias Context, A...) {
 		mixin Context!A;
@@ -270,8 +270,14 @@ package template Splitter(size_t peekStep = 128) {
 			"Only streams of chars or bytes can be read by line, not " ~ InputElementType.stringof);
 
 		const(Char)[] line;
-		immutable(Char)[] separator;
 		bool keepSeparator;
+		static if (is(Separator : Char)) {
+			Char separator;
+			bool done;
+		}
+		else {
+			immutable(Char)[] separator;
+		}
 
 		public this(Separator)(typeof(null) dummy, Separator separator, bool keep)
 		{
@@ -279,7 +285,10 @@ package template Splitter(size_t peekStep = 128) {
 			// TODO: optimize for single-char separator
 			import std.conv : to;
 			this.keepSeparator = keep;
-			this.separator = separator.to!(typeof(this.separator));
+			static if (is(Separator : Char))
+				this.separator = separator;
+			else
+				this.separator = separator.to!(typeof(this.separator));
 			next();
 		}
 
@@ -288,19 +297,38 @@ package template Splitter(size_t peekStep = 128) {
 			if (line.length)
 				source.consume(line.length);
 			line = cast(typeof(line)) source.peek(peekStep);
-			for (size_t i = 0; ; i++) {
-				if (line.length - i < separator.length) {
-					line = cast(typeof(line)) source.peek(line.length + peekStep);
-					if (line.length - i < separator.length) {
-						separator = null;
+			static if (is(Separator : Char)) {
+				for (;;) {
+					import std.string : indexOf;
+					auto i = line.indexOf(separator);
+					if (i >= 0) {
+						line = line[0 .. i + 1];
+						return;
+					}
+					auto len = line.length;
+					line = cast(const(Char)[]) source.peek(len + peekStep);
+					if (line.length == len) {
+						done = true;
 						if (line.length == 0)
 							line = null;
-						return; // we've read everything, and haven't found separator
+						return;
 					}
 				}
-				if (line[i .. i + separator.length] == separator[]) {
-					line = line[0 .. i + separator.length];
-					return;
+			} else {
+				for (size_t i = 0; ; i++) {
+					if (line.length - i < separator.length) {
+						line = cast(typeof(line)) source.peek(line.length + peekStep);
+						if (line.length - i < separator.length) {
+							separator = null;
+							if (line.length == 0)
+								line = null;
+							return; // we've read everything, and haven't found separator
+						}
+					}
+					if (line[i .. i + separator.length] == separator[]) {
+						line = line[0 .. i + separator.length];
+						return;
+					}
 				}
 			}
 		}
@@ -313,31 +341,41 @@ package template Splitter(size_t peekStep = 128) {
 
 		@property const(Char)[] front()()
 		{
-			return keepSeparator ? line : line[0 .. $ - separator.length];
+			static if (is(Separator : Char))
+				return keepSeparator ? line : line[0 .. $ - (done ? 0 : 1)];
+			else
+				return keepSeparator ? line : line[0 .. $ - separator.length];
 		}
 
 		void popFront()()
 		{
-			if (separator.length)
-				next();
-			else
-				line = null;
+			static if (is(Separator : Char)) {
+				if (done)
+					line = null;
+				else
+					next();
+			} else {
+				if (separator.length)
+					next();
+				else
+					line = null;
+			}
 		}
 	}
 }
 
 unittest {
 	import std.string : representation;
-	assert("Zażółć gęślą jaźń".pipe!(Splitter!3)(null, ' ', true)
+	assert("Zażółć gęślą jaźń".pipe!(Splitter!(char, 3))(null, ' ', true)
 		.equal(["Zażółć ", "gęślą ", "jaźń"]));
-	assert("Zażółć gęślą jaźń".representation.pipe!(Splitter!3)(null, ' ', true)
+	assert("Zażółć gęślą jaźń".representation.pipe!(Splitter!(char, 3))(null, ' ', true)
 		.equal(["Zażółć ", "gęślą ", "jaźń"]));
-	assert("Zażółć gęślą jaźń "w.pipe!(Splitter!5)(null, " "d, true)
+	assert("Zażółć gęślą jaźń "w.pipe!(Splitter!(dstring, 5))(null, " "d, true)
 		.equal(["Zażółć "w, "gęślą "w, "jaźń "w]));
 	// map and filter decode the string into a sequence of dchars
-	assert("여보세요 세계".map!"a".filter!(a => true).pipe!(Splitter!2)(null, " ", false)
+	assert("여보세요 세계".map!"a".filter!(a => true).pipe!(Splitter!(string, 2))(null, " ", false)
 		.equal(["여보세요"d, "세계"d]));
-	assert("Foo\r\nBar\r\nBaz\r\r\n\r\n".pipe!(Splitter!4)(null, "\r\n"w, false)
+	assert("Foo\r\nBar\r\nBaz\r\r\n\r\n".pipe!(Splitter!(wstring, 4))(null, "\r\n"w, false)
 		.equal(["Foo", "Bar", "Baz\r", ""]));
 }
 
@@ -355,7 +393,7 @@ auto byLine(S, Terminator)(S schema, Terminator terminator = '\n',
 	Flag!"keepTerminator" keep_terminator = No.keepTerminator)
 	if (isSchema!S)
 {
-	return schema.pipe!(Splitter!())(null, terminator, keep_terminator);
+	return schema.pipe!(Splitter!Terminator)(null, terminator, keep_terminator);
 }
 
 ///
