@@ -7,6 +7,7 @@
 module flod.range;
 
 import std.range : isInputRange, isOutputRange;
+import std.traits : isSomeChar;
 import std.typecons : Flag, No;
 
 import flod.pipeline : pipe, isSchema;
@@ -298,16 +299,17 @@ package template Splitter(Separator, size_t peekStep = 128) {
 				source.consume(line.length);
 			line = cast(typeof(line)) source.peek(peekStep);
 			static if (is(Separator : Char)) {
+				size_t start = 0;
 				for (;;) {
 					import std.string : indexOf;
-					auto i = line.indexOf(separator);
+					auto i = line[start .. $].indexOf(separator);
 					if (i >= 0) {
-						line = line[0 .. i + 1];
+						line = line[0 .. start + i + 1];
 						return;
 					}
-					auto len = line.length;
-					line = cast(const(Char)[]) source.peek(len + peekStep);
-					if (line.length == len) {
+					start = line.length;
+					line = cast(const(Char)[]) source.peek(start + peekStep);
+					if (line.length == start) {
 						done = true;
 						if (line.length == 0)
 							line = null;
@@ -391,7 +393,14 @@ a copy must be made using e.g. `idup` or `to!string`.
 */
 auto byLine(S, Terminator)(S schema, Terminator terminator = '\n',
 	Flag!"keepTerminator" keep_terminator = No.keepTerminator)
-	if (isSchema!S)
+	if (isSchema!S && isSomeChar!Terminator)
+{
+	return schema.pipe!(Splitter!Terminator)(null, terminator, keep_terminator);
+}
+
+auto byLine(S, Terminator)(S schema, Terminator terminator,
+	Flag!"keepTerminator" keep_terminator = No.keepTerminator)
+	if (isSchema!S && isInputRange!Terminator)
 {
 	return schema.pipe!(Splitter!Terminator)(null, terminator, keep_terminator);
 }
