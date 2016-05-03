@@ -40,6 +40,7 @@ private:
 	File file;
 
 public:
+	this(File file) { this.file = file; }
 	this(in char[] name) { file = File(name, "wb"); }
 
 	size_t push(const(InputElementType)[] buf)
@@ -49,12 +50,20 @@ public:
 	}
 }
 
-/// Returns a pipe that writes `ubyte`s to file `name`.
+/// Returns a pipe that writes to file `name`.
 auto write(S)(S schema, in char[] name)
 	if (isSchema!S)
 {
 	import flod.pipeline : pipe;
 	return schema.pipe!FileWriter(name);
+}
+
+/// Returns a pipe that writes to file `file`.
+auto write(S)(S schema, File file)
+	if (isSchema!S)
+{
+	import flod.pipeline : pipe;
+	return schema.pipe!FileWriter(file);
 }
 
 unittest {
@@ -63,8 +72,13 @@ unittest {
 		if (exists(".test"))
 			remove(".test");
 	}
-	read("/etc/passwd").write(".test");
 	auto f1 = stdread("/etc/passwd");
+
+	read("/etc/passwd").write(".test");
 	auto f2 = stdread(".test");
 	assert(f1 == f2);
+
+	read("/etc/passwd").write(File(".test", "wb"));
+	auto f3 = stdread(".test");
+	assert(f1 == f3);
 }
