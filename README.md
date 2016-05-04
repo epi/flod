@@ -39,12 +39,12 @@
 - [x] Input range interface to read from a pipeline by chunk.
 - [x] Input range interface to read from a pipeline by line.
 - [x] Output range interface (put to pipeline).
-- [ ] Reading from and writing to files.
+- [x] Reading from and writing to files.
 - [x] Metadata support.
 - [ ] Hints for best chunk size.
 - [ ] Stream sequences (e.g. archives of multiple files).
 - [ ] Multiplexing and demultiplexing.
-- [ ] Automatic parallelization.
+- [ ] Parallelization.
 - [ ] Dynamic (run-time polymorphic) stage interface.
 - [ ] Stable API.
 
