@@ -546,6 +546,12 @@ template OutputRangeSource(El = void) {
 }
 
 /// ditto
+@property auto pass(E, alias fun)()
+{
+	return .pipe!(DelegateSource!(fun, E));
+}
+
+/// ditto
 alias _ = pass;
 
 version(unittest) {
