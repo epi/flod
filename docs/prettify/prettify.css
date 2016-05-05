@@ -1,30 +1,27 @@
 /* Pretty printing styles. Used with prettify.js. */
 
+pre {
+  font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
+  white-space: pre-wrap;       /* CSS 3 */
+  white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+  white-space: -pre-wrap;      /* Opera 4-6 */
+  white-space: -o-pre-wrap;    /* Opera 7 */
+  word-wrap: break-word;       /* Internet Explorer 5.5+ */
+}
+
 /* SPAN elements with the classes below are added by prettyprint. */
 .pln { color: #222 }  /* plain text */
-pre .pln { color: #000 }  /* plain text */
-
-code {
-	font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
-}
-
-pre {
-	font-family: "Menlo", "Ubuntu Mono", "DejaVu Sans Mono", "Consolas", monospace;
-    white-space: pre-wrap;       /* CSS 3 */
-    white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
-    white-space: -pre-wrap;      /* Opera 4-6 */
-    white-space: -o-pre-wrap;    /* Opera 7 */
-    word-wrap: break-word;       /* Internet Explorer 5.5+ */
-}
+pre .pln, div.prototype .pln { color: #000 }  /* plain text */
 
 @media screen {
-  pre .str { color: #c20 }  /* string content */
+  pre .str { color: #a20 }  /* string content */
   pre .typ { color: #3a8412 }  /* a type name */
-  pre .lit { color: #7f735b }  /* a literal value */
+  pre .lit { color: #a20 }  /* a literal value */
   pre .pun, .opn, .clo { color: #44c }
 
+  .spc { color: #a0a }  /* special token sequence */
   .str { color: #842 }  /* string content */
-  .kwd { color: #640; font-weight: bold }  /* a keyword */
+  .kwd { color: #a80; font-weight: bold }  /* a keyword */
   .com { color: #777; font-style: italic }  /* a comment */
   .typ { color: #693 }  /* a type name */
   .lit { color: #875 }  /* a literal value */
@@ -39,6 +36,7 @@ pre {
 
 /* Use higher contrast and text-weight for printable form. */
 @media print, projection {
+  .spc { color: #505 }  /* special token sequence */
   .str { color: #060 }
   .kwd { color: #006; font-weight: bold }
   .com { color: #600; font-style: italic }
@@ -51,8 +49,8 @@ pre {
 }
 
 /* Put a border around prettyprinted code snippets. */
-pre.prettyprint {
-  padding: 0.1em 0.1em;
+pre.prettyprint, pre.code, div.prototype {
+  padding: 0.2em 0.3em;
   background-color: #eee;
   border: none;
   border-top: 1px solid #ccc;
