@@ -43,14 +43,14 @@ private template DefaultPullPeekAdapter(Buffer) {
 }
 
 ///
-auto pullPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto pullPeek(S, Buffer)(S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultPullPeekAdapter!Buffer)(buffer);
 }
 
 ///
-auto pullPeek(S)(auto ref S schema)
+auto pullPeek(S)(S schema)
 	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
@@ -76,7 +76,7 @@ struct DefaultPeekPullAdapter(alias Context, A...) {
 }
 
 ///
-auto peekPull(S)(auto ref S schema)
+auto peekPull(S)(S schema)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPeekPullAdapter;
@@ -115,7 +115,7 @@ struct DefaultPullPushAdapter(alias Context, A...) {
 }
 
 ///
-auto pullPush(S)(auto ref S schema, size_t chunkSize = 4096)
+auto pullPush(S)(S schema, size_t chunkSize = 4096)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPullPushAdapter(chunkSize);
@@ -150,7 +150,7 @@ struct DefaultPullAllocAdapter(alias Context, A...) {
 }
 
 ///
-auto pullAlloc(S)(auto ref S schema, size_t chunkSize = 4096)
+auto pullAlloc(S)(S schema, size_t chunkSize = 4096)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPullAllocAdapter(chunkSize);
@@ -185,7 +185,7 @@ struct DefaultPeekPushAdapter(alias Context, A...) {
 }
 
 ///
-auto peekPush(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof)
+auto peekPush(S)(S schema, size_t minSliceSize = size_t.sizeof)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPeekPushAdapter(minSliceSize);
@@ -230,7 +230,7 @@ struct DefaultPeekAllocAdapter(alias Context, A...) {
 }
 
 ///
-auto peekAlloc(S)(auto ref S schema, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
+auto peekAlloc(S)(S schema, size_t minSliceSize = size_t.sizeof, size_t maxSliceSize = 4096)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPeekAllocAdapter(minSliceSize, maxSliceSize);
@@ -254,7 +254,7 @@ struct DefaultPushAllocAdapter(alias Context, A...) {
 }
 
 ///
-auto pushAlloc(S)(auto ref S schema)
+auto pushAlloc(S)(S schema)
 	if (isSchema!S)
 {
 	return schema.pipe!DefaultPushAllocAdapter();
@@ -337,13 +337,13 @@ private template DefaultPushPullAdapter(Buffer) {
 }
 
 ///
-auto pushPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto pushPull(S, Buffer)(S schema, auto ref Buffer buffer)
 {
 	return schema.pipe!(DefaultPushPullAdapter!Buffer)(buffer);
 }
 
 ///
-auto pushPull(S)(auto ref S schema)
+auto pushPull(S)(S schema)
 {
 	import flod.buffer : movingBuffer;
 	return schema.pushPull(movingBuffer());
@@ -425,13 +425,13 @@ private template DefaultPushPeekAdapter(Buffer) {
 
 
 ///
-auto pushPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto pushPeek(S, Buffer)(S schema, auto ref Buffer buffer)
 {
 	return schema.pipe!(DefaultPushPeekAdapter!Buffer)(buffer);
 }
 
 ///
-auto pushPeek(S)(auto ref S schema)
+auto pushPeek(S)(S schema)
 {
 	import flod.buffer : movingBuffer;
 	return schema.pushPeek(movingBuffer());
@@ -462,14 +462,14 @@ private template DefaultAllocPeekAdapter(Buffer) {
 }
 
 ///
-auto allocPeek(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto allocPeek(S, Buffer)(S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPeekAdapter!Buffer)(buffer);
 }
 
 ///
-auto allocPeek(S)(auto ref S schema)
+auto allocPeek(S)(S schema)
 	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
@@ -516,14 +516,14 @@ private template DefaultAllocPullAdapter(Buffer) {
 }
 
 ///
-auto allocPull(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto allocPull(S, Buffer)(S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPullAdapter!Buffer)(buffer);
 }
 
 ///
-auto allocPull(S)(auto ref S schema)
+auto allocPull(S)(S schema)
 	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;
@@ -565,14 +565,14 @@ private template DefaultAllocPushAdapter(Buffer) {
 }
 
 ///
-auto allocPush(S, Buffer)(auto ref S schema, auto ref Buffer buffer)
+auto allocPush(S, Buffer)(S schema, auto ref Buffer buffer)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPushAdapter!Buffer)(buffer);
 }
 
 ///
-auto allocPush(S)(auto ref S schema)
+auto allocPush(S)(S schema)
 	if (isSchema!S)
 {
 	import flod.buffer : movingBuffer;

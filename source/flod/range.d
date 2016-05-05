@@ -143,7 +143,7 @@ private template RangeSink(R) {
 	}
 }
 
-public auto copy(S, R)(auto ref S schema, R outputRange)
+public auto copy(S, R)(S schema, R outputRange)
 	if (isSchema!S && isOutputRange!(R, S.ElementType))
 {
 	return schema.pipe!(RangeSink!R)(outputRange);
