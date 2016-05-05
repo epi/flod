@@ -34,5 +34,34 @@ License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
 */
 module flod;
 
+import flod.pipeline : pipe, isSchema;
+import flod.traits : Method, source, sink, filter;
+
 public import flod.range : copy, pass, byLine, byChunk;
 public import flod.file : read, write;
+
+@sink(Method.push)
+private struct NullSink(alias Context, A...) {
+	mixin Context!A;
+
+	size_t push(const(InputElementType)[] chunk)
+	{
+		return chunk.length;
+	}
+}
+
+/**
+A sink that discards all data written to it.
+*/
+auto discard(S)(S schema)
+	if (isSchema!S)
+{
+	return schema.pipe!NullSink;
+}
+
+///
+unittest {
+	import std.range : iota;
+	"not important".discard();
+	iota(31337).discard();
+}
