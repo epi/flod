@@ -65,3 +65,38 @@ unittest {
 	"not important".discard();
 	iota(31337).discard();
 }
+
+@sink(Method.pull)
+private struct ArraySink(alias Context, A...) {
+	mixin Context!A;
+private:
+	alias E = InputElementType;
+
+public:
+	@property E[] front()()
+	{
+		E[] array;
+		size_t offset;
+		for (;;) {
+			array.length = array.length + 16384;
+			offset += source.pull(array[offset .. $]);
+			if (offset < array.length)
+				return array[0 .. offset];
+		}
+	}
+}
+
+/**
+A sink that stores all the stream data in a GC-allocated array and returns the array.
+*/
+auto array(S)(S schema)
+	if (isSchema!S)
+{
+	return schema.pipe!ArraySink.front;
+}
+
+///
+unittest {
+	import std.range : iota, stdarray = array;
+	assert(iota(1048576).array == iota(1048576).stdarray);
+}
