@@ -144,16 +144,16 @@ private template getMethodAttributes(alias S) {
 }
 
 ///
-enum getMethods(alias S) = getMethodAttributes!S.untyped;
+package enum getMethods(alias S) = getMethodAttributes!S.untyped;
 
 ///
-alias SinkElementType(alias S) = getMethodAttributes!S.SinkElementType;
+package alias SinkElementType(alias S) = getMethodAttributes!S.SinkElementType;
 
 ///
-alias SourceElementType(alias S) = getMethodAttributes!S.SourceElementType;
+package alias SourceElementType(alias S) = getMethodAttributes!S.SourceElementType;
 
 /// Gets the element type at source or sink end of i-th stage in `StageSeq`.
-template SourceElementType(size_t i, StageSeq...) {
+package template SourceElementType(size_t i, StageSeq...) {
 	alias E = SourceElementType!(StageSeq[i]);
 	static if (!is(E == void))
 		alias SourceElementType = E;
@@ -169,7 +169,7 @@ template SourceElementType(size_t i, StageSeq...) {
 }
 
 /// ditto
-template SinkElementType(size_t i, StageSeq...) {
+package template SinkElementType(size_t i, StageSeq...) {
 	alias E = SinkElementType!(StageSeq[i]);
 	static if (is(E == void) && i > 0)
 		alias SinkElementType = SourceElementType!(i - 1, StageSeq);
@@ -177,7 +177,6 @@ template SinkElementType(size_t i, StageSeq...) {
 		alias SinkElementType = E;
 }
 
-///
 unittest {
 	@source!double(Method.pull) struct Foo {}
 	@filter(Method.pull) struct Bar {}

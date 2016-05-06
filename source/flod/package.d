@@ -34,6 +34,80 @@ License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
 */
 module flod;
 
+import flod.pipeline : pipe, isSchema;
+import flod.traits : Method, source, sink, filter;
+
 public import flod.range : copy, pass, byLine, byChunk;
 public import flod.file : read, write;
 public import flod.adapter : parallel;
+
+@sink(Method.push)
+private struct NullSink(alias Context, A...) {
+	mixin Context!A;
+
+	size_t push(const(InputElementType)[] chunk)
+	{
+		return chunk.length;
+	}
+}
+
+/**
+A sink that discards all data written to it.
+*/
+void discard(S)(S schema)
+	if (isSchema!S)
+{
+	return schema.pipe!NullSink;
+}
+
+///
+unittest {
+	import std.range : iota;
+	"not important".discard();
+	iota(31337).discard();
+}
+
+@sink(Method.pull)
+private struct ArraySink(alias Context, A...) {
+	mixin Context!A;
+private:
+	alias E = InputElementType;
+
+public:
+	@property E[] front()()
+	{
+		E[] array;
+		size_t offset;
+		for (;;) {
+			array.length = array.length + 16384;
+			offset += source.pull(array[offset .. $]);
+			if (offset < array.length)
+				return array[0 .. offset];
+		}
+	}
+}
+
+/**
+A sink that reads the entire stream and stores its contents in a GC-allocated array.
+
+`array` cannot be used for pipelines that start with an output range wrapper (`flod.range.pass(E)`).
+If you need a pipeline with output range interface that stores the output in an array,
+use `flod.range.pass` with delegate parameter or `flod.range.copy` with `std.array.Appender`.
+
+Returns:
+A GC-allocated array filled with the output of the previous stage.
+
+See_Also:
+`flod.range.copy`
+*/
+auto array(S)(S schema)
+	if (isSchema!S)
+{
+	return schema.pipe!ArraySink.front;
+}
+
+///
+unittest {
+	import std.range : iota, stdarray = array;
+	assert(iota(1048576).array == iota(1048576).stdarray);
+}

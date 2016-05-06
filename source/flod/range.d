@@ -1,9 +1,16 @@
-/** Convert ranges to pipelines and pipelines to ranges.
- *
- *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
- *  Copyright: © 2016 Adrian Matoga
- *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
- */
+/**
+This module contains pipes used to convert between ranges and pipelines.
+
+Built-in arrays and input ranges can be used directly as pipeline sources.
+For arrays of characters no auto-decoding is performed.
+
+Pipelines can be read from as input ranges by element (`flod.pipeline.Schema.opSlice`),
+by chunk (`byChunk`) or by line (`byLine`).
+
+Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+Copyright: © 2016 Adrian Matoga
+License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+*/
 module flod.range;
 
 import std.range : isInputRange, isOutputRange;
@@ -143,10 +150,11 @@ private template RangeSink(R) {
 	}
 }
 
-public auto copy(S, R)(auto ref S schema, R outputRange)
+/// Copies all data from the pipeline instantiated from `schema` to output range `target`.
+public auto copy(S, R)(S schema, R target)
 	if (isSchema!S && isOutputRange!(R, S.ElementType))
 {
-	return schema.pipe!(RangeSink!R)(outputRange);
+	return schema.pipe!(RangeSink!R)(target);
 }
 
 unittest {
@@ -158,7 +166,7 @@ unittest {
 	assert(app.data[] == [89, 90, 91, 92, 93]);
 }
 
-template DelegateSource(alias fun, E) {
+private template DelegateSource(alias fun, E) {
 	@source!E(Method.push)
 	struct DelegateSource(alias Context, A...) {
 		mixin Context!A;
@@ -175,14 +183,9 @@ template DelegateSource(alias fun, E) {
 	}
 }
 
-package auto pipeFromDelegate(E, alias fun)()
+private auto pipeFromDelegate(E, alias fun)()
 {
 	return pipe!(DelegateSource!(fun, E));
-}
-
-unittest {
-	int z = 2;
-	auto x = [10, 20, 30].map!(n => n + z);
 }
 
 unittest {
@@ -203,6 +206,104 @@ unittest {
 		})
 		.copy(app);
 	assert(app.data == "first line 42\nformatted 0000deadbeef line\n");
+}
+
+template OutputRangeSource(El = void) {
+	@source!El(Method.push)
+	package struct OutputRangeSource(alias Context, A...) {
+		mixin Context!A;
+
+		alias E = OutputElementType;
+
+		void put(const(E)[] elements)
+		{
+			sink.push(elements);
+		}
+	}
+}
+
+/**
+Starts a pipeline to be used as an output range.
+
+Params:
+ E = Type of elements accepted by the output range.
+Returns:
+ A `flod.pipeline.Schema` to which next stages can be appended.
+*/
+@property auto pass(E = void)()
+{
+	import flod.pipeline : DriveMode;
+	return .pipe!(OutputRangeSource!E, DriveMode.source);
+}
+
+version(unittest) {
+	void testOutputRange(string r)()
+	{
+		import std.array : appender;
+		import std.format : formattedWrite;
+		import flod.adapter;
+		auto app = appender!string();
+		{
+			auto or = mixin(r);
+			or.formattedWrite("test %d\n", 42);
+			or.formattedWrite("%s line\n", "second");
+		}
+		assert(app.data == "test 42\nsecond line\n");
+	}
+}
+
+unittest {
+	testOutputRange!q{ pass!char.copy(app) };
+}
+
+unittest {
+	// test if this works also with more drivers
+	testOutputRange!q{ pass!char.peekAlloc.pullPush.copy(app) };
+}
+
+/// ditto
+@property auto pass(E, alias fun)()
+{
+	return .pipe!(DelegateSource!(fun, E));
+}
+
+///
+unittest {
+	import flod : array;
+	import std.array : appender;
+	import std.format : formattedWrite;
+	import std.range : put;
+
+	// Create an pipeline object that can be used as output range
+	auto app = appender!string;
+	auto p = pass!char.copy(app);
+	put(p, "Hello, world!\n");
+	p.formattedWrite("The answer is: %d\n", 42);
+	assert(app.data == "Hello, world!\nThe answer is: 42\n");
+
+	// Write to a pipeline from a lambda
+	auto s = pass!(char, (r) {
+			put(r, "Hello, lambda world!\n");
+			r.formattedWrite("The answer is still %d\n", 42);
+		})
+		.array();
+	assert(s == "Hello, lambda world!\nThe answer is still 42\n");
+
+}
+
+unittest {
+	import std.algorithm : copy;
+	import std.range : iota, array;
+	import flod.pipeline : TestPushSink, outputArray, outputIndex, Arg;
+	outputArray.length = 5000;
+	outputIndex = 0;
+	pass!(ulong, (o)
+		{
+			auto r = iota(42UL, 1024);
+			r.copy(o);
+		})
+		.pipe!TestPushSink(Arg!TestPushSink());
+	assert(outputArray[0 .. outputIndex] == iota(42UL, 1024).array());
 }
 
 @sink(Method.pull)
@@ -398,6 +499,7 @@ auto byLine(S, Terminator)(S schema, Terminator terminator = '\n',
 	return schema.pipe!(Splitter!Terminator)(null, terminator, keep_terminator);
 }
 
+/// ditto
 auto byLine(S, Terminator)(S schema, Terminator terminator,
 	Flag!"keepTerminator" keep_terminator = No.keepTerminator)
 	if (isSchema!S && isInputRange!Terminator)
@@ -407,8 +509,13 @@ auto byLine(S, Terminator)(S schema, Terminator terminator,
 
 ///
 unittest {
-	import flod.adapter : peekPush;
+	import std.uni : toUpper;
 	assert("first\nsecond\nthird\n".byLine.equal(["first", "second", "third"]));
+	assert("zażółć\r\ngęślą\r\njaźń".map!toUpper.byLine("\r\n").equal(["ZAŻÓŁĆ"d, "GĘŚLĄ"d, "JAŹŃ"d]));
+}
+
+unittest {
+	import flod.adapter : peekPush;
 	assert("first\nsecond\nthird".peekPush.byLine.equal(["first", "second", "third"]));
 }
 
@@ -522,59 +629,4 @@ unittest {
 	assert(arr.byChunk(2).equal([[ 42, 41 ], [ 40, 39 ], [ 38, 37 ], [ 36 ]]));
 	int[3] buf;
 	assert(arr.byChunk(buf[]).equal([[ 42, 41, 40 ], [ 39, 38, 37 ], [ 36 ]]));
-}
-
-template OutputRangeSource(El = void) {
-	@source!El(Method.push)
-	package struct OutputRangeSource(alias Context, A...) {
-		mixin Context!A;
-
-		alias E = OutputElementType;
-
-		void put(const(E)[] elements)
-		{
-			sink.push(elements);
-		}
-	}
-}
-
-/// A pipe used to start a pipeline to be used as an output range.
-@property auto pass(E = void)()
-{
-	import flod.pipeline : DriveMode;
-	return .pipe!(OutputRangeSource!E, DriveMode.source);
-}
-
-/// ditto
-@property auto pass(E, alias fun)()
-{
-	return .pipe!(DelegateSource!(fun, E));
-}
-
-/// ditto
-alias _ = pass;
-
-version(unittest) {
-	void testOutputRange(string r)()
-	{
-		import std.array : appender;
-		import std.format : formattedWrite;
-		import flod.adapter;
-		auto app = appender!string();
-		{
-			auto or = mixin(r);
-			or.formattedWrite("test %d\n", 42);
-			or.formattedWrite("%s line\n", "second");
-		}
-		assert(app.data == "test 42\nsecond line\n");
-	}
-}
-
-unittest {
-	testOutputRange!q{ pass!char.copy(app) };
-}
-
-unittest {
-	// test if this works also with more drivers
-	testOutputRange!q{ pass!char.peekAlloc.pullPush.copy(app) };
 }

@@ -22,12 +22,14 @@ a:hover {
 	        box-sizing: border-box;
 	display: inline-block;
 	vertical-align: top;
-	font-size: 10pt;
+	font-size: 11pt;
+	position: fixed;
 	min-width: 10em;
 	width: 20%;
+	top: 0;
+	bottom: 0;
 	padding: 2em 1em;
-	border-right: 1px solid black;
-	border-bottom: 1px solid black;
+	border-right: 1px solid #ccc;
 	background-color: #eee;
 }
 
@@ -36,8 +38,10 @@ a:hover {
 	   -moz-box-sizing: border-box;
 	        box-sizing: border-box;
 	display: inline-block;
+	position: absolute;
 	vertical-align: top;
-	font-size: 10pt;
+	font-size: 11pt;
+	margin-left: 20%;
 	width: 80%;
 	padding: 2em;
 }

@@ -6,6 +6,8 @@
  */
 module flod.meta;
 
+package:
+
 /// Used to compare alias lists.
 struct Id(X...) {}
 
