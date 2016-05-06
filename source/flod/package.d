@@ -53,7 +53,7 @@ private struct NullSink(alias Context, A...) {
 /**
 A sink that discards all data written to it.
 */
-auto discard(S)(S schema)
+void discard(S)(S schema)
 	if (isSchema!S)
 {
 	return schema.pipe!NullSink;
@@ -87,7 +87,17 @@ public:
 }
 
 /**
-A sink that stores all the stream data in a GC-allocated array and returns the array.
+A sink that reads the entire stream and stores its contents in a GC-allocated array.
+
+`array` cannot be used for pipelines that start with an output range wrapper (`flod.range.pass(E)`).
+If you need a pipeline with output range interface that stores the output in an array,
+use `flod.range.pass` with delegate parameter or `flod.range.copy` with `std.array.Appender`.
+
+Returns:
+A GC-allocated array filled with the output of the previous stage.
+
+See_Also:
+`flod.range.copy`
 */
 auto array(S)(S schema)
 	if (isSchema!S)

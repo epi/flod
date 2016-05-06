@@ -1,9 +1,13 @@
-/** Pipeline composition.
- *
- *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
- *  Copyright: © 2016 Adrian Matoga
- *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
- */
+/**
+Pipeline composition.
+
+This module contains functions and types that are mainly used by pipe implementors
+to append stages to pipelines and instantiate pipelines.
+
+Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+Copyright: © 2016 Adrian Matoga
+License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+*/
 module flod.pipeline;
 
 import std.meta : AliasSeq, staticMap;
@@ -163,14 +167,21 @@ unittest {
 }
 
 /**
-Implements spawn(), stop() and yield() using core.Thread.Fiber.
+A mixin template that implements spawn(), stop() and yield() using core.Thread.Fiber.
 
-Useful as generic implementation for passive filters.
+Useful as a convenient default implementation for passive filters. It is used by all passive filters in
+`flod.adapter`.
 */
 mixin template FiberSwitch() {
 	import core.thread : Fiber;
 	Fiber _flod_fiber;
 
+	/**
+	Start the next driver in the pipeline in a new fiber (but do not call it yet).
+
+	This function is called during the instantiation of the pipeline once all necessary stage constructors
+	have been executed.
+	*/
 	void spawn()()
 	{
 		import core.thread : Fiber;
@@ -181,6 +192,9 @@ mixin template FiberSwitch() {
 			}, 65536);
 	}
 
+	/**
+	Make sure that the fiber has finished execution.
+	*/
 	void stop()
 	{
 		auto f = this._flod_fiber;
@@ -197,7 +211,10 @@ mixin template FiberSwitch() {
 	/**
 	Switch context.
 
-	Executes the other context up to the point where it also calls yield() or returns.
+	This function should be called from passive filter methods to switch context between
+	source driver loop and sink driver loop when the source produces new data or the sink starves.
+
+	Executes the other driver's loop up to the point where it also calls yield() or returns.
 
 	Returns: non-zero if the other context finished execution.
 	*/
@@ -313,11 +330,11 @@ private static AdapterInsertionInfo[] buildListOfAdapters(const(MethodAttribute)
 }
 
 /**
-Holds the information (both static and dynamic) needed to create a pipeline instance.
+`Schema` is an expression template that holds the information about the sequence of stages that constitute
+the pipeline and arguments passed to their constructors when the pipeline is instantiated.
 
-The static information includes the template aliases of all stages in the pipeline, as well as
-types of their constructor arguments.
-The dynamic information is the constructor arguments themselves.
+`Schema` objects should not be created explicitly, but instead the function `.pipe` and member function `Schema.pipe`
+should be used to create a schema and append stages to it.
 */
 struct Schema(DriveMode mode, S...) {
 private:
@@ -411,8 +428,32 @@ private:
 	}
 
 public:
-	/// Appends NextStage to this schema.
+	/**
+	Appends stage to this schema.
+
+	Params:
+	NextStage = Stage to be appended
+	NextArgs = Arguments to be passed to `NextStage` constructor when the pipeline is instantiated.
+
+	Returns:
+	The returned value depends on `NextStage` and the first (source) stage.
+	$(UL
+	 $(LI If `NextStage` is a filter, a `Schema` is returned that allows appending further stages to it.)
+	 $(LI If `NextStage` is an active sink that implements input range interface, the pipeline is instantiated as a
+	      reference-counted struct object that also exposes the input range interface.)
+	 $(LI If `NextStage` is a sink and the first stage is an active source that implements output range interfaece,
+	      the pipeline is instantiated as a reference-counted struct object that also exposes the output
+	      range interface.)
+	 $(LI If neither first stage nor `NextStage` have range interface, the pipeline is instantiated on the
+	      stack and and executed immediately.)
+	 $(LI It is an error if both first stage and `NextStage` have range interfaces.)
+	)
+
+	See_Also:
+	`.pipe`, `flod.traits.filter`, `flod.traits.sink`;
+	*/
 	auto pipe(alias NextStage, NextArgs...)(auto ref NextArgs nextArgs)
+		if (isStage!NextStage)
 	{
 		alias T = StageSpec!(NextStage, NextArgs);
 		auto result = Schema!(driveMode, StageSpecSeq, T)(stages, T(nextArgs));
@@ -429,8 +470,15 @@ public:
 	}
 }
 
-///
-enum isSchema(P) =
+/**
+Checks if the type argument is a pipeline schema.
+
+Apart from instances of `Schema`, built-in arrays and input ranges are also treated as schemas.
+This allows them to be directly used as pipeline sources.
+*/
+enum bool isSchema(P) = isSchemaImpl!P;
+
+private enum isSchemaImpl(P) =
 	   isDynamicArray!P
 	|| isInputRange!P
 	|| {
@@ -441,8 +489,7 @@ enum isSchema(P) =
 	}()
 	|| is(P == FakeSchema);
 
-///
-auto pipe(alias Stage, DriveMode mode = DriveMode.sink, Args...)(auto ref Args args)
+auto pipe(alias Stage, DriveMode mode, Args...)(auto ref Args args)
 	if (isStage!Stage)
 {
 	static if (isSink!Stage && Args.length > 0 && isDynamicArray!(Args[0]))
@@ -455,7 +502,30 @@ auto pipe(alias Stage, DriveMode mode = DriveMode.sink, Args...)(auto ref Args a
 	}
 }
 
-/// A pipeline built based on schema S.
+/**
+Starts building a pipeline.
+
+Params:
+ Stage = The source stage.
+ Args = Arguments passed to stage constructor when the stage is instantiated.
+
+Returns:
+ A `Schema` that allows next stages to be appended.
+
+See_Also: `Schema.pipe`.
+*/
+auto pipe(alias Stage, Args...)(auto ref Args args)
+	if (isStage!Stage)
+{
+	return .pipe!(Stage, DriveMode.sink, Args)(args);
+}
+
+/**
+A pipeline built based on schema S.
+
+`Pipeline` objects should not be created explicitly. They are created (and sometimes returned)
+by `Schema.pipe` once the final stage is appended.
+*/
 struct Pipeline(DriveMode mode, S...) {
 private:
 	public enum driveMode = mode;
