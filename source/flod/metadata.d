@@ -21,10 +21,16 @@ package struct TagAttribute(T, string k, TagOp o) {
 	enum TagOp op = o;
 }
 
-enum tagSetter() = tuple().expand;
-enum tagGetter() = tuple().expand;
-enum tagSetter(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.set)(), tagSetter!Z).expand;
-enum tagGetter(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.get)(), tagGetter!Z).expand;
+private enum tagSetterImpl() = tuple().expand;
+private enum tagGetterImpl() = tuple().expand;
+private enum tagSetterImpl(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.set)(), tagSetterImpl!Z).expand;
+private enum tagGetterImpl(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.get)(), tagGetterImpl!Z).expand;
+
+/// This attribute declares the stage as setter for tag `key` of type `Type`.
+enum tagSetter(Type, string key, next...) = tagSetterImpl!(Type, key, next);
+
+/// This attribute declares the stage as getter for tag `key` of type `Type`.
+enum tagGetter(Type, string key, next...) = tagGetterImpl!(Type, key, next);
 
 private enum isTagAttribute(S...) = is(typeof(S[0]) : TagAttribute!_a, _a...);
 package enum getTagAttributes(S...) = tuple(Filter!(isTagAttribute, __traits(getAttributes, S[0]))).expand;
@@ -69,7 +75,7 @@ Params:
 i = index of first stage in StageSeq
 StageSeq = sequence of stages
 */
-template FilterTagAttributes(size_t i, StageSeq...)
+package template FilterTagAttributes(size_t i, StageSeq...)
 	if (allSatisfy!(isStage, StageSeq))
 {
 	static if (StageSeq.length) {
@@ -120,11 +126,11 @@ unittest {
 	static assert(!isTagSpec!(Id!int));
 }
 
-template hasKey(string k) {
+private template hasKey(string k) {
 	enum bool hasKey(alias S) = S.key == k;
 }
 
-template TagSpecByKey(string k, tagSpecs...)
+private template TagSpecByKey(string k, tagSpecs...)
 	if (allSatisfy!(isTagSpec, tagSpecs))
 {
 	alias TagSpecByKey = Filter!(hasKey!k, tagSpecs);
@@ -139,7 +145,7 @@ unittest {
 	static assert(is(Id!bar == Id!(specs[1])));
 }
 
-template RemoveTagSpecByKey(string k, tagSpecs...)
+private template RemoveTagSpecByKey(string k, tagSpecs...)
 	if (allSatisfy!(isTagSpec, tagSpecs))
 {
 	static if (tagSpecs.length == 0)
@@ -167,7 +173,7 @@ template MergeTagSpecs(alias NewSpec, tagSpecs...)
 
 /** Transposes a sequence of (index, tag_attributes...) tuples into a sequence of TagSpecs
 */
-template TagSpecSeq(TagAttributeTupleSeq...) {
+private template TagSpecSeq(TagAttributeTupleSeq...) {
 	static if (TagAttributeTupleSeq.length == 0)
 		alias TagSpecSeq = AliasSeq!();
 	else static if (TagAttributeTupleSeq[0].tagAttributes.length == 0)
