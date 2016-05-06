@@ -7,6 +7,7 @@ pre {
   white-space: -pre-wrap;      /* Opera 4-6 */
   white-space: -o-pre-wrap;    /* Opera 7 */
   word-wrap: break-word;       /* Internet Explorer 5.5+ */
+  tab-size: 4;
 }
 
 /* SPAN elements with the classes below are added by prettyprint. */
