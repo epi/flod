@@ -455,12 +455,6 @@ auto pipe(alias Stage, DriveMode mode = DriveMode.sink, Args...)(auto ref Args a
 	}
 }
 
-///
-auto pipe(E, alias Dg)()
-{
-	return pipeFromDelegate!(E, Dg);
-}
-
 /// A pipeline built based on schema S.
 struct Pipeline(DriveMode mode, S...) {
 private:
@@ -1527,20 +1521,6 @@ unittest {
 	outputIndex = 0;
 	r.pipe!TestPullSink(Arg!TestPullSink());
 	assert(outputArray[0 .. outputIndex] == iota(55, 1555).take(20).array());
-}
-
-unittest {
-	import std.algorithm : copy;
-	import std.range : iota;
-	outputArray.length = 5000;
-	outputIndex = 0;
-	pipe!(ulong, (o)
-		{
-			auto r = iota(42UL, 1024);
-			r.copy(o);
-		})
-		.pipe!TestPushSink(Arg!TestPushSink());
-	assert(outputArray[0 .. outputIndex] == iota(42UL, 1024).array());
 }
 
 unittest {
