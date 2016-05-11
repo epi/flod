@@ -44,7 +44,7 @@
 - [ ] Hints for best chunk size.
 - [ ] Stream sequences (e.g. archives of multiple files).
 - [ ] Multiplexing and demultiplexing.
-- [ ] Parallelization.
+- [x] Parallelization.
 - [ ] Dynamic (run-time polymorphic) stage interface.
 - [ ] Stable API.
 
@@ -83,6 +83,7 @@ There are several libraries in D and other languages which share some goals with
   - Support for passing metadata down the pipeline.
   - Stages are now allowed to implement multiple methods (sources, sinks) or method pairs
     (filters). The actual method is chosen based on the methods supported by other stages.
+  - Pipeline can be split in two or more parts which are executed in parallel.
 
 - v0.0.2 (2016-03-15)
   - Can use built-in arrays and input ranges as pipeline sources.
