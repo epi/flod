@@ -616,6 +616,12 @@ private:
 			atomicStore(stopAt, writeCount);
 			peekSem.notify();
 		} else {
+			atomicStore(stopAt, readCount);
+			synchronized (mutex) {
+				buffer.consume!E(cacheSize - cache.length);
+				auto b = buffer.peek!E;
+				buffer.consume!E(b.length);
+			}
 			allocSem.notify();
 		}
 	}
@@ -662,6 +668,13 @@ public:
 
 	size_t commit()(size_t n)
 	{
+		auto s = atomicLoad(stopAt);
+		if (writeCount + n > s) {
+			if (writeCount > s)
+				n = 0;
+			else
+				n = s - writeCount;
+		}
 		synchronized (mutex) {
 			buffer.commit!E(n);
 		}
@@ -718,38 +731,54 @@ unittest {
 
 unittest {
 	import std.algorithm : equal, stdcopy = copy;
-	import std.range : appender, iota, cycle, take;
+	import std.range : appender, iota, cycle, stdtake = take;
 	import flod.range : copy, pass;
 	import flod.pipeline : pipe;
+	import flod : take;
 
-	foreach (size; [ 1, 1023, 1024, 4096, 4097, 128 * 1024 - 15, 128 * 1024 ].cycle.take(70)) {
-		auto app = appender!(int[])();
-		iota(size).parallel.copy(app);
-		assert(iota(size).equal(app.data));
-		app.clear();
-		iota(size).parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.copy(app);
-		assert(iota(size).equal(app.data));
-		app.clear();
-		{
-			auto r = pass!int.parallel.copy(app);
-			iota(size).stdcopy(r);
+	foreach (size; [ 1, 1023, 1024, 4096, 4097, 128 * 1024 - 15, 128 * 1024 ].cycle.stdtake(14)) {
+		foreach (takesize; [ 0, 1, size - 1, size, size + 4096 ]) {
+			import std.algorithm : min;
+			import std.stdio;
+			auto actualsize = min(takesize, size);
+
+			auto app = appender!(int[])();
+			iota(size).parallel.take(takesize).copy(app);
+			assert(iota(actualsize).equal(app.data));
+
+			app.clear();
+			iota(size).parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.take(takesize).copy(app);
+			assert(iota(actualsize).equal(app.data));
+
+			app.clear();
+			iota(size).parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.take(takesize).copy(app);
+			assert(iota(actualsize).equal(app.data));
+
+			app.clear();
+			{
+				auto r = pass!int.parallel.take(takesize).copy(app);
+				iota(size).stdcopy(r);
+			}
+			assert(iota(actualsize).equal(app.data));
+
+			app.clear();
+			{
+				auto r = pass!int.parallel.parallel.peekPush.parallel
+					.pushPeek.parallel.parallel.take(takesize).copy(app);
+				iota(size).stdcopy(r);
+			}
+			assert(iota(actualsize).equal(app.data));
+
+			app.clear();
+			// ideally, size should be accessible inside the lambda template arg.
+			// since it doesn't compile this way, we're passing it via a static var, which
+			// also must be shared, because the source will actually run in a background thread.
+			static shared(int) s_size;
+			s_size = size;
+			pass!(int, (orange) {
+					iota(s_size).stdcopy(orange);
+				}).parallel.take(takesize).copy(app);
+			assert(iota(actualsize).equal(app.data));
 		}
-		assert(iota(size).equal(app.data));
-		app.clear();
-		{
-			auto r = pass!int.parallel.parallel.peekPush.parallel.pushPeek.parallel.parallel.copy(app);
-			iota(size).stdcopy(r);
-		}
-		assert(iota(size).equal(app.data));
-		app.clear();
-		// ideally, size should be accessible inside the lambda template arg.
-		// since it doesn't compile this way, we're passing it via a static var, which
-		// also must be shared, because the source will actually run in a background thread.
-		static shared(int) s_size;
-		s_size = size;
-		pass!(int, (orange) {
-				iota(s_size).stdcopy(orange);
-			}).parallel.copy(app);
-		assert(iota(size).equal(app.data));
 	}
 }
