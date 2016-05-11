@@ -203,7 +203,6 @@ mixin template FiberSwitch() {
 				this._flod_fiber = null;
 				f.call();
 			}
-			auto x = f.state;
 			assert(f.state == Fiber.State.TERM);
 		}
 	}
@@ -566,11 +565,15 @@ private:
 	else
 		enum isRunnable = false;
 
-	// Calls all secondary drivers for the last time to make sure they have completed.
+	// Request that each passive filter stops its secondary driver, in the reverse order of spawning.
 	void stop(size_t i = 0)()
 	{
-		static if (methods[i].isPassiveFilter)
-			tup[i].stop();
+		static if (driveMode == DriveMode.source)
+			enum size_t j = i;
+		else
+			enum size_t j = StageSeq.length - 1 - i;
+		static if (methods[j].isPassiveFilter)
+			tup[j].stop();
 		static if (i + 1 < StageSeq.length)
 			stop!(i + 1)();
 	}
