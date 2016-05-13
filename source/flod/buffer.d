@@ -23,23 +23,6 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 		return n.alignUp(size_t.sizeof);
 }
 
-import std.experimental.allocator.mallocator : Mallocator;
-
-/// A buffer that discards all data written to it and always returns empty slice.
-struct NullBuffer {
-private:
-	void[] buffer;
-public:
-	~this() { Mallocator.instance.deallocate(buffer); }
-	T[] alloc(T)(size_t n)
-	{
-		return new T[n];
-	}
-	void commit(T)(size_t n) {};
-	const(T)[] peek(T)() { return null; }
-	void consume(T)(size_t n) {};
-}
-
 /**
 A buffer that relies on moving chunks of data in memory
 to ensure that contiguous slices of any requested size can always be provided.
