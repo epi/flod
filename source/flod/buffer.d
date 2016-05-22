@@ -107,7 +107,7 @@ auto typedBuffer(E, Buffer)(Buffer buffer)
 }
 
 version(unittest) {
-	private void testBuffer2(Buffer)(ref Buffer b)
+	private void testBuffer(Buffer)(auto ref Buffer b)
 	{
 		import std.range : iota, array, put;
 		import std.algorithm : copy;
@@ -135,7 +135,7 @@ version(unittest) {
 
 unittest {
 	auto tb = typedBuffer!int(GCBuffer());
-	testBuffer2(tb);
+	testBuffer(tb);
 }
 
 /**
@@ -220,36 +220,9 @@ auto movingBuffer(Allocator)(Allocator allocator = Mallocator.instance)
 	return MovingBuffer!Allocator(allocator);
 }
 
-version(unittest) {
-	private void testBuffer(Buffer)(auto ref Buffer b)
-	{
-		import std.range : iota, array, put;
-		import std.algorithm : copy;
-		static assert(is(typeof(b)));
-		assert(b.peek!uint().length == 0);
-		b.consume!uint(0);
-		auto chunk = b.alloc!uint(1);
-		assert(chunk.length >= 1);
-		assert(b.peek!uint().length == 0);
-		chunk = b.alloc!uint(31337);
-		assert(chunk.length >= 31337);
-		auto arr = iota!uint(0, chunk.length).array();
-		iota!uint(0, cast(uint) chunk.length).copy(chunk[0 .. $]);
-		b.commit!uint(1312);
-		assert(b.peek!uint()[] == arr[0 .. 1312]);
-		b.commit!uint(chunk.length - 1312);
-		assert(b.peek!uint()[] == arr[]);
-		b.consume!uint(0);
-		assert(b.peek!uint()[] == arr[]);
-		b.consume!uint(15);
-		assert(b.peek!uint()[] == arr[15 .. $]);
-		// TODO: put more stress on the buffer
-	}
-}
-
 unittest {
 	auto b = typedBuffer!int(movingBuffer());
-	testBuffer2(b);
+	testBuffer(b);
 	// consume everything and check if b will reset its pointers.
 	b.consume(b.peek().length);
 	assert(b.peek().length == 0);
@@ -273,7 +246,7 @@ private:
 	import core.sys.posix.sys.mman : mmap, munmap,
 		MAP_ANON, MAP_PRIVATE, MAP_FIXED, MAP_SHARED, MAP_FAILED, PROT_WRITE, PROT_READ;
 
-	void[] buffer;
+	void[] storage;
 	size_t peekOffset;
 	size_t peekableLength;
 	int fd = -1;
@@ -282,15 +255,15 @@ private:
 	@property size_t allocOffset() const pure nothrow
 	{
 		auto ao = peekOffset + peekableLength;
-		if (ao <= buffer.length)
+		if (ao <= storage.length)
 			return ao;
-		return ao - buffer.length;
+		return ao - storage.length;
 	}
 
-	@property size_t allocableLength() const pure nothrow { return buffer.length - peekableLength; }
+	@property size_t allocableLength() const pure nothrow { return storage.length - peekableLength; }
 
 	invariant {
-		assert(peekOffset <= buffer.length);
+		assert(peekOffset <= storage.length);
 	}
 
 	this(size_t initialSize, Flag!"grow" grow)
@@ -298,7 +271,7 @@ private:
 		if (!createFile())
 			return;
 		if (initialSize)
-			buffer = allocate(initialSize);
+			storage = allocate(initialSize);
 		this.grow = grow;
 	}
 
@@ -348,21 +321,19 @@ private:
 
 	bool reallocate(size_t length)
 	{
-		if (length == buffer.length)
+		if (length == storage.length)
 			return true;
 		auto newbuf = allocate(length);
 		if (!newbuf)
 			return false;
-		newbuf.ptr[peekOffset .. peekOffset + peekableLength] = buffer.ptr[peekOffset .. peekOffset + peekableLength];
+		newbuf.ptr[peekOffset .. peekOffset + peekableLength] = storage.ptr[peekOffset .. peekOffset + peekableLength];
 		if (peekOffset > allocOffset) {
-			auto po1 = peekOffset;
-			auto po2 = newbuf.length - buffer.length;
-			peekOffset += newbuf.length - buffer.length;
+			peekOffset += newbuf.length - storage.length;
 			if (peekOffset >= newbuf.length)
 				peekOffset -= newbuf.length;
 		}
-		deallocate(buffer);
-		buffer = newbuf;
+		deallocate(storage);
+		storage = newbuf;
 		return true;
 	}
 
@@ -377,54 +348,44 @@ private:
 public:
 	~this()
 	{
-		deallocate(buffer);
+		deallocate(storage);
 		if (fd >= 0) {
 			close(fd);
 			fd = -1;
 		}
 	}
 
-	/// Returns a read-only slice, typed as `const(T)[]`, containing all data currently available in the buffer.
-	const(T)[] peek(T)()
+	///
+	const(void)[] peek()()
 	{
-		auto typed = cast(const(T*)) (buffer.ptr + peekOffset);
-		auto count = peekableLength / T.sizeof;
-		return typed[0 .. count];
+		return storage[peekOffset .. peekOffset + peekableLength];
 	}
 
-	/// Removes first `n` objects of type `T` from the buffer.
-	void consume(T)(size_t n)
+	///
+	void consume()(size_t n)
 	{
-		size_t tn = T.sizeof * n;
-		assert(peekableLength >= tn);
-		peekOffset += tn;
-		peekableLength -= tn;
-		if (peekOffset >= buffer.length)
-			peekOffset -= buffer.length;
+		assert(peekableLength >= n);
+		peekOffset += n;
+		peekableLength -= n;
+		if (peekOffset >= storage.length)
+			peekOffset -= storage.length;
 	}
 
-	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
-	T[] alloc(T)(size_t n)
+	///
+	void[] alloc()(size_t n)
 	{
-		auto typed = cast(T*) (buffer.ptr + allocOffset);
-		auto count = allocableLength / T.sizeof;
-		if (grow && count < n) {
-			// make sure at least T[n] will be available behind what's currently peekable
-			reallocate(peekOffset + peekableLength + n * T.sizeof);
-			typed = cast(T*) (buffer.ptr + allocOffset);
-			count = allocableLength / T.sizeof;
-			assert(count >= n); // TODO: let it return smaller chunk and the user will handle it
+		if (grow && allocableLength < n) {
+			reallocate(peekOffset + peekableLength + n);
+			assert(allocableLength >= n);
 		}
-		return typed[0 .. count];
+		return storage[allocOffset .. allocOffset + allocableLength];
 	}
 
-	/// Adds first `n` objects of type `T` stored in the slice previously obtained using `alloc`.
-	/// Does not touch the remaining part of that slice.
-	void commit(T)(size_t n)
+	///
+	void commit()(size_t n)
 	{
-		size_t tn = T.sizeof * n;
-		assert(tn <= allocableLength);
-		peekableLength += tn;
+		assert(n <= allocableLength);
+		peekableLength += n;
 	}
 }
 
@@ -434,5 +395,5 @@ auto mmappedBuffer(size_t initialSize = 0, Flag!"grow" grow = Yes.grow)
 }
 
 unittest {
-	testBuffer(mmappedBuffer());
+	testBuffer(typedBuffer!int(mmappedBuffer()));
 }
