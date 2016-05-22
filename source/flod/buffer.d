@@ -24,6 +24,119 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 }
 
 /**
+A trivial buffer that uses GC to allocate and extend the underlying storage.
+*/
+struct GCBuffer {
+private:
+    void[] storage;
+	size_t allocOffset;
+public:
+	///
+	const(void)[] peek() const pure nothrow @safe
+	{
+		return storage[0 .. allocOffset];
+	}
+
+	///
+	void consume(size_t n) pure nothrow @safe
+	{
+		storage = storage[n .. $];
+		allocOffset -= n;
+	}
+
+	///
+	void[] alloc(size_t n) pure nothrow @safe
+	{
+		if (storage.length < allocOffset + n)
+			storage.length = allocOffset + n;
+		return storage[allocOffset .. $];
+	}
+
+	///
+	void commit(size_t n) pure nothrow @safe
+	{
+		allocOffset += n;
+	}
+}
+
+/**
+Wrapper that provides a typed view over `Buffer`.
+
+Params:
+E = Element type.
+Buffer = Underlying buffer implementation.
+*/
+struct TypedBuffer(E, Buffer) {
+private:
+	Buffer buffer;
+
+public:
+	///
+	const(E)[] peek()()
+	{
+		auto s = buffer.peek();
+		return (cast(const(E)*) s.ptr)[0 .. s.length / E.sizeof];
+	}
+
+	///
+	void consume()(size_t n)
+	{
+		buffer.consume(n * E.sizeof);
+	}
+
+	///
+	E[] alloc()(size_t n)
+	{
+		auto s = buffer.alloc(n * E.sizeof);
+		return (cast(E*) s.ptr)[0 .. s.length / E.sizeof];
+	}
+
+	///
+	void commit()(size_t n)
+	{
+		buffer.commit(n * E.sizeof);
+	}
+}
+
+/// ditto
+auto typedBuffer(E, Buffer)(Buffer buffer)
+{
+	return TypedBuffer!(E, Buffer)(buffer);
+}
+
+version(unittest) {
+	private void testBuffer2(Buffer)(ref Buffer b)
+	{
+		import std.range : iota, array, put;
+		import std.algorithm : copy;
+		static assert(is(typeof(b)));
+		assert(b.peek().length == 0);
+		b.consume(0);
+		auto chunk = b.alloc(1);
+		assert(chunk.length >= 1);
+		assert(b.peek().length == 0);
+		chunk = b.alloc(31337);
+		assert(chunk.length >= 31337);
+		auto arr = iota!uint(0, chunk.length).array();
+		iota!uint(0, cast(uint) chunk.length).copy(chunk[0 .. $]);
+		b.commit(1312);
+		assert(b.peek()[] == arr[0 .. 1312]);
+		b.commit(chunk.length - 1312);
+		assert(b.peek()[] == arr[]);
+		b.consume(0);
+		assert(b.peek()[] == arr[]);
+		b.consume(15);
+		assert(b.peek()[] == arr[15 .. $]);
+		// TODO: put more stress on the buffer
+	}
+}
+
+unittest {
+	auto tb = typedBuffer!int(GCBuffer());
+	testBuffer2(tb);
+}
+
+/**
 A buffer that relies on moving chunks of data in memory
 to ensure that contiguous slices of any requested size can always be provided.
 Params:
