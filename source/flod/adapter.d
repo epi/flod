@@ -6,9 +6,15 @@
  */
 module flod.adapter;
 
-import flod.buffer: movingBuffer, typedBuffer;
+import flod.buffer: typedBuffer;
 import flod.pipeline : pipe, isSchema, FiberSwitch;
 import flod.traits : filter, Method;
+
+auto defaultBufferFactory()
+{
+	import flod.buffer: movingBuffer;
+	return movingBuffer();
+}
 
 private template DefaultPullPeekAdapter(BufferFactory) {
 	@filter(Method.pull, Method.peek)
@@ -46,7 +52,7 @@ private template DefaultPullPeekAdapter(BufferFactory) {
 }
 
 ///
-auto pullPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto pullPeek(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultPullPeekAdapter!BF)(bufferFactory);
@@ -332,7 +338,7 @@ private template DefaultPushPullAdapter(BufferFactory) {
 }
 
 ///
-auto pushPull(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto pushPull(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 {
 	return schema.pipe!(DefaultPushPullAdapter!BF)(bufferFactory);
 }
@@ -413,7 +419,7 @@ private template DefaultPushPeekAdapter(BufferFactory) {
 
 
 ///
-auto pushPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto pushPeek(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 {
 	return schema.pipe!(DefaultPushPeekAdapter!BF)(bufferFactory);
 }
@@ -443,7 +449,7 @@ private template DefaultAllocPeekAdapter(BufferFactory) {
 }
 
 ///
-auto allocPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto allocPeek(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPeekAdapter!BF)(bufferFactory);
@@ -489,7 +495,7 @@ private template DefaultAllocPullAdapter(BufferFactory) {
 }
 
 ///
-auto allocPull(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto allocPull(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPullAdapter!BF)(bufferFactory);
@@ -531,7 +537,7 @@ private template DefaultAllocPushAdapter(BufferFactory) {
 }
 
 ///
-auto allocPush(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
+auto allocPush(S, BF)(S schema, BF bufferFactory = &defaultBufferFactory)
 	if (isSchema!S)
 {
 	return schema.pipe!(DefaultAllocPushAdapter!BF)(bufferFactory);
