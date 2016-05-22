@@ -6,55 +6,50 @@
  */
 module flod.adapter;
 
+import flod.buffer: movingBuffer, typedBuffer;
 import flod.pipeline : pipe, isSchema, FiberSwitch;
 import flod.traits : filter, Method;
 
-private template DefaultPullPeekAdapter(Buffer) {
+private template DefaultPullPeekAdapter(BufferFactory) {
 	@filter(Method.pull, Method.peek)
 	struct DefaultPullPeekAdapter(alias Context, A...) {
 		mixin Context!A;
-		private Buffer buffer;
-
+	private:
 		static assert(is(InputElementType == OutputElementType));
-		private alias E = InputElementType;
+		alias E = InputElementType;
 
-		this()(auto ref Buffer buffer)
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
+
+	public:
+		this(BufferFactory bf)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bf());
 		}
 
 		const(E)[] peek(size_t size)
 		{
-			auto ready = buffer.peek!E();
+			auto ready = buffer.peek();
 			if (ready.length >= size)
 				return ready;
-			auto chunk = buffer.alloc!E(size - ready.length);
+			auto chunk = buffer.alloc(size - ready.length);
 			assert(chunk.length >= size - ready.length);
 			size_t r = source.pull(chunk);
-			buffer.commit!E(r);
-			return buffer.peek!E();
+			buffer.commit(r);
+			return buffer.peek();
 		}
 
 		void consume(size_t size)
 		{
-			buffer.consume!E(size);
+			buffer.consume(size);
 		}
 	}
 }
 
 ///
-auto pullPeek(S, Buffer)(S schema, auto ref Buffer buffer)
+auto pullPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultPullPeekAdapter!Buffer)(buffer);
-}
-
-///
-auto pullPeek(S)(S schema)
-	if (isSchema!S)
-{
-	import flod.buffer : movingBuffer;
-	return schema.pullPeek(movingBuffer());
+	return schema.pipe!(DefaultPullPeekAdapter!BF)(bufferFactory);
 }
 
 @filter(Method.peek, Method.pull)
@@ -260,23 +255,23 @@ auto pushAlloc(S)(S schema)
 	return schema.pipe!DefaultPushAllocAdapter();
 }
 
-private template DefaultPushPullAdapter(Buffer) {
+private template DefaultPushPullAdapter(BufferFactory) {
 	@filter(Method.push, Method.pull)
 	struct DefaultPushPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
+	private:
 
-		private {
-			static assert(is(InputElementType == OutputElementType));
-			alias E = InputElementType;
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
 
-			Buffer buffer;
-			const(E)[] pushed;
-		}
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
+		const(E)[] pushed;
 
-		this()(auto ref Buffer buffer)
+	public:
+		this(BufferFactory bufferFactory)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bufferFactory());
 		}
 
 		mixin FiberSwitch;
@@ -292,11 +287,11 @@ private template DefaultPushPullAdapter(Buffer) {
 
 		private E[] pullFromBuffer(E[] dest)
 		{
-			auto src = buffer.peek!E();
+			auto src = buffer.peek();
 			auto len = min(src.length, dest.length);
 			if (len > 0) {
 				dest[0 .. len] = src[0 .. len];
-				buffer.consume!E(len);
+				buffer.consume(len);
 				return dest[len .. $];
 			}
 			return dest;
@@ -325,10 +320,10 @@ private template DefaultPushPullAdapter(Buffer) {
 			// whatever's left in pushed, keep it in buffer for the next time pull() is called
 			while (pushed.length > 0) {
 				auto len = pushed.length;
-				auto b = buffer.alloc!E(len);
+				auto b = buffer.alloc(len);
 				assert(b.length >= len);
 				b[0 .. len] = pushed[];
-				buffer.commit!E(len);
+				buffer.commit(len);
 				pushed = null;
 			}
 			return requestedLength - dest.length;
@@ -337,16 +332,9 @@ private template DefaultPushPullAdapter(Buffer) {
 }
 
 ///
-auto pushPull(S, Buffer)(S schema, auto ref Buffer buffer)
+auto pushPull(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 {
-	return schema.pipe!(DefaultPushPullAdapter!Buffer)(buffer);
-}
-
-///
-auto pushPull(S)(S schema)
-{
-	import flod.buffer : movingBuffer;
-	return schema.pushPull(movingBuffer());
+	return schema.pipe!(DefaultPushPullAdapter!BF)(bufferFactory);
 }
 
 private template ImplementPeekConsume(E) {
@@ -354,7 +342,7 @@ private template ImplementPeekConsume(E) {
 	{
 		const(E)[] result;
 		for (;;) {
-			result = buffer.peek!E;
+			result = buffer.peek();
 			if (result.length >= n)
 				break;
 			if (yield())
@@ -365,14 +353,14 @@ private template ImplementPeekConsume(E) {
 
 	void consume(size_t n)
 	{
-		buffer.consume!E(n);
+		buffer.consume(n);
 	}
 }
 
 private template ImplementAllocCommit(E) {
 	bool alloc(ref E[] buf, size_t n)
 	{
-		buf = buffer.alloc!E(n);
+		buf = buffer.alloc(n);
 		if (!buf || buf.length < n)
 			return false;
 		return true;
@@ -380,29 +368,29 @@ private template ImplementAllocCommit(E) {
 
 	size_t commit(size_t n)
 	{
-		buffer.commit!E(n);
+		buffer.commit(n);
 		if (yield())
 			return 0;
 		return n;
 	}
 }
 
-private template DefaultPushPeekAdapter(Buffer) {
+private template DefaultPushPeekAdapter(BufferFactory) {
 	@filter(Method.push, Method.peek)
 	struct DefaultPushPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
 
-		private {
-			static assert(is(InputElementType == OutputElementType));
-			alias E = InputElementType;
+	private:
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
 
-			Buffer buffer;
-		}
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
 
-		this()(auto ref Buffer buffer)
+	public:
+		this(BufferFactory bufferFactory)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bufferFactory());
 		}
 
 		mixin FiberSwitch;
@@ -410,10 +398,10 @@ private template DefaultPushPeekAdapter(Buffer) {
 		size_t push(const(E)[] buf)
 		{
 			size_t n = buf.length;
-			auto ob = buffer.alloc!E(n);
+			auto ob = buffer.alloc(n);
 			assert(ob.length >= n);
 			ob[0 .. n] = buf[0 .. n];
-			buffer.commit!E(n);
+			buffer.commit(n);
 			if (yield())
 				return 0;
 			return n;
@@ -425,34 +413,27 @@ private template DefaultPushPeekAdapter(Buffer) {
 
 
 ///
-auto pushPeek(S, Buffer)(S schema, auto ref Buffer buffer)
+auto pushPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 {
-	return schema.pipe!(DefaultPushPeekAdapter!Buffer)(buffer);
+	return schema.pipe!(DefaultPushPeekAdapter!BF)(bufferFactory);
 }
 
-///
-auto pushPeek(S)(S schema)
-{
-	import flod.buffer : movingBuffer;
-	return schema.pushPeek(movingBuffer());
-}
-
-private template DefaultAllocPeekAdapter(Buffer) {
+private template DefaultAllocPeekAdapter(BufferFactory) {
 	@filter(Method.alloc, Method.peek)
 	struct DefaultAllocPeekAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
 
-		private {
-			static assert(is(InputElementType == OutputElementType));
-			alias E = InputElementType;
+	private:
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
 
-			Buffer buffer;
-		}
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
 
-		this()(auto ref Buffer buffer)
+	public:
+		this(BufferFactory bufferFactory)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bufferFactory());
 		}
 
 		mixin FiberSwitch;
@@ -462,36 +443,28 @@ private template DefaultAllocPeekAdapter(Buffer) {
 }
 
 ///
-auto allocPeek(S, Buffer)(S schema, auto ref Buffer buffer)
+auto allocPeek(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultAllocPeekAdapter!Buffer)(buffer);
+	return schema.pipe!(DefaultAllocPeekAdapter!BF)(bufferFactory);
 }
 
-///
-auto allocPeek(S)(S schema)
-	if (isSchema!S)
-{
-	import flod.buffer : movingBuffer;
-	return schema.allocPeek(movingBuffer());
-}
-
-private template DefaultAllocPullAdapter(Buffer) {
+private template DefaultAllocPullAdapter(BufferFactory) {
 	@filter(Method.alloc, Method.pull)
 	struct DefaultAllocPullAdapter(alias Context, A...) {
 		import std.algorithm : min;
 		mixin Context!A;
 
-		private {
-			static assert(is(InputElementType == OutputElementType));
-			alias E = InputElementType;
+	private:
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
 
-			Buffer buffer;
-		}
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
 
-		this()(auto ref Buffer buffer)
+	public:
+		this(BufferFactory bufferFactory)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bufferFactory());
 		}
 
 		mixin FiberSwitch;
@@ -501,7 +474,7 @@ private template DefaultAllocPullAdapter(Buffer) {
 		{
 			const(E)[] ib;
 			for (;;) {
-				ib = buffer.peek!E;
+				ib = buffer.peek();
 				if (ib.length >= buf.length)
 					break;
 				if (yield())
@@ -509,46 +482,39 @@ private template DefaultAllocPullAdapter(Buffer) {
 			}
 			auto len = min(ib.length, buf.length);
 			buf[0 .. len] = ib[0 .. len];
-			buffer.consume!E(len);
+			buffer.consume(len);
 			return len;
 		}
 	}
 }
 
 ///
-auto allocPull(S, Buffer)(S schema, auto ref Buffer buffer)
+auto allocPull(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultAllocPullAdapter!Buffer)(buffer);
+	return schema.pipe!(DefaultAllocPullAdapter!BF)(bufferFactory);
 }
 
-///
-auto allocPull(S)(S schema)
-	if (isSchema!S)
-{
-	import flod.buffer : movingBuffer;
-	return schema.allocPull(movingBuffer());
-}
-
-private template DefaultAllocPushAdapter(Buffer) {
+private template DefaultAllocPushAdapter(BufferFactory) {
 	@filter(Method.alloc, Method.push)
 	struct DefaultAllocPushAdapter(alias Context, A...) {
 		mixin Context!A;
-		private {
-			static assert(is(InputElementType == OutputElementType));
-			alias E = InputElementType;
 
-			Buffer buffer;
-		}
+	private:
+		static assert(is(InputElementType == OutputElementType));
+		alias E = InputElementType;
 
-		this()(auto ref Buffer buffer)
+		typeof(typedBuffer!E(BufferFactory.init())) buffer;
+
+	public:
+		this(BufferFactory bufferFactory)
 		{
-			this.buffer = buffer;
+			this.buffer = typedBuffer!E(bufferFactory());
 		}
 
 		bool alloc(ref E[] buf, size_t n)
 		{
-			buf = buffer.alloc!E(n);
+			buf = buffer.alloc(n);
 			if (!buf || buf.length < n)
 				return false;
 			return true;
@@ -556,25 +522,17 @@ private template DefaultAllocPushAdapter(Buffer) {
 
 		size_t commit(size_t n)
 		{
-			buffer.commit!E(n);
-			sink.push(buffer.peek!E[0 .. n]);
-			buffer.consume!E(n);
+			buffer.commit(n);
+			sink.push(buffer.peek()[0 .. n]);
+			buffer.consume(n);
 			return n;
 		}
 	}
 }
 
 ///
-auto allocPush(S, Buffer)(S schema, auto ref Buffer buffer)
+auto allocPush(S, BF)(S schema, BF bufferFactory = { return movingBuffer(); })
 	if (isSchema!S)
 {
-	return schema.pipe!(DefaultAllocPushAdapter!Buffer)(buffer);
-}
-
-///
-auto allocPush(S)(S schema)
-	if (isSchema!S)
-{
-	import flod.buffer : movingBuffer;
-	return schema.allocPush(movingBuffer());
+	return schema.pipe!(DefaultAllocPushAdapter!BF)(bufferFactory);
 }

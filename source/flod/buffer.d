@@ -6,6 +6,7 @@
  */
 module flod.buffer;
 
+import std.experimental.allocator.mallocator : Mallocator;
 import std.typecons : Flag, Yes;
 
 private size_t alignUp(size_t n, size_t al)
@@ -101,7 +102,8 @@ public:
 /// ditto
 auto typedBuffer(E, Buffer)(Buffer buffer)
 {
-	return TypedBuffer!(E, Buffer)(buffer);
+	import std.algorithm : move;
+	return TypedBuffer!(E, Buffer)(move(buffer));
 }
 
 version(unittest) {
@@ -142,139 +144,80 @@ to ensure that contiguous slices of any requested size can always be provided.
 Params:
  Allocator = _Allocator used for internal storage allocation.
 */
-struct MovingBuffer(Allocator = Mallocator) {
+struct MovingBuffer(Allocator) {
 private:
-	import core.exception : OutOfMemoryError;
+	import flod.meta : NonCopyable;
+	mixin NonCopyable;
 
-	void[] buffer;
+	void[] storage;
 	size_t peekOffset;
 	size_t allocOffset;
 	Allocator allocator;
 
 	invariant {
 		assert(peekOffset <= allocOffset);
-		assert(allocOffset <= buffer.length);
+		assert(allocOffset <= storage.length);
 	}
 
 public:
-	this()(auto ref Allocator allocator, size_t initialSize = 0)
+	this(Allocator allocator, size_t initialSize = 0) @trusted
 	{
-		import flod.meta : moveIfNonCopyable;
-		this.allocator = moveIfNonCopyable(allocator);
+		this.allocator = allocator;
 		if (initialSize > 0)
-			buffer = allocator.allocate(allocator.goodSize(initialSize));
+			storage = allocator.allocate(allocator.goodSize(initialSize));
 	}
 
-	this(this)
+	~this() @trusted
 	{
-		auto buflen = buffer.length - peekOffset;
-		if (!buflen) {
-			buffer = null;
-			allocOffset = 0;
-			peekOffset = 0;
-		} else {
-			auto nb = allocator.allocate(buflen);
-			auto datalen = allocOffset - peekOffset;
-			if (datalen)
-				nb[0 .. datalen] = buffer[peekOffset .. allocOffset];
-			allocOffset -= peekOffset;
-			peekOffset = 0;
-			buffer = nb;
-		}
+		allocator.deallocate(storage);
+		storage = null;
 	}
 
-	~this()
-	{
-		allocator.deallocate(buffer);
-		buffer = null;
-	}
-
-	void opAssign(MovingBuffer rhs)
-	{
-		import std.algorithm : swap;
-		swap(this, rhs);
-	}
-
-	/// Allocates space for at least `n` new objects of type `T` to be written to the buffer.
-	T[] alloc(T)(size_t n)
+	///
+	void[] alloc()(size_t n) @trusted
 	{
 		import std.experimental.allocator : reallocate;
 		import core.stdc.string : memmove;
-		size_t tn = T.sizeof * n;
-		if (buffer.length - allocOffset >= tn)
-			return cast(T[]) buffer[allocOffset .. $];
-		memmove(buffer.ptr, buffer.ptr + peekOffset, allocOffset - peekOffset);
+		if (storage.length >= allocOffset + n)
+			return storage[allocOffset .. $];
+		memmove(storage.ptr, storage.ptr + peekOffset, allocOffset - peekOffset);
 		allocOffset -= peekOffset;
 		peekOffset = 0;
-		size_t newSize = goodSize(allocator, allocOffset + tn);
-		if (buffer.length < newSize)
-			allocator.reallocate(buffer, newSize);
-		assert(buffer.length - allocOffset >= tn); // TODO: let it return smaller chunk and the user will handle it
-		return cast(T[]) buffer[allocOffset .. $];
+		size_t newSize = goodSize(allocator, allocOffset + n);
+		if (storage.length < newSize)
+			allocator.reallocate(storage, newSize);
+		assert(storage.length >= allocOffset + n);
+		return storage[allocOffset .. $];
 	}
 
-	/// Adds first `n` objects of type `T` stored in the slice previously obtained using `alloc`.
-	/// Does not touch the remaining part of that slice.
-	void commit(T)(size_t n)
+	///
+	void commit()(size_t n) @trusted
 	{
-		size_t tn = T.sizeof * n;
-		allocOffset += tn;
-		assert(allocOffset <= buffer.length);
+		allocOffset += n;
 	}
 
-	/// Returns a read-only slice, typed as `const(T)[]`, containing all data currently available in the buffer.
-	const(T)[] peek(T)()
+	///
+	const(void)[] peek()() const @trusted
 	{
-		return cast(const(T)[]) buffer[peekOffset .. allocOffset];
+		return storage[peekOffset .. allocOffset];
 	}
 
-	/// Removes first `n` objects of type `T` from the buffer.
-	void consume(T)(size_t n)
+	///
+	void consume()(size_t n) @trusted
 	{
-		size_t tn = T.sizeof * n;
-		peekOffset += tn;
+		peekOffset += n;
 		assert(peekOffset <= allocOffset);
-		if (peekOffset == buffer.length) {
+		if (peekOffset == storage.length) {
 			peekOffset = 0;
 			allocOffset = 0;
 		}
 	}
 }
 
-///
-auto movingBuffer(Allocator)(auto ref Allocator allocator)
+/// ditto
+auto movingBuffer(Allocator)(Allocator allocator = Mallocator.instance)
 {
 	return MovingBuffer!Allocator(allocator);
-}
-
-///
-auto movingBuffer()
-{
-	import std.experimental.allocator.mallocator : Mallocator;
-	return movingBuffer(Mallocator.instance);
-}
-
-unittest {
-	auto b = movingBuffer();
-	auto xb = b.alloc!uint(10);
-	xb[0 .. 3] = [ 42, 1337, 6502 ];
-	b.commit!uint(3);
-	assert(b.peek!uint == [ 42, 1337, 6502 ]);
-	b.consume!uint(1);
-	assert(b.peek!uint == [ 1337, 6502 ]);
-	auto c = b;
-	assert(c.peek!uint == [ 1337, 6502 ]);
-	b.consume!uint(1);
-	assert(b.peek!uint == [ 6502 ]);
-	assert(c.peek!uint == [ 1337, 6502 ]);
-	auto xc = c.alloc!uint(10);
-	xc[0 .. 3] = [ 42, 17, 42 ];
-	c.commit!uint(3);
-	assert(b.peek!uint == [ 6502 ]);
-	assert(c.peek!uint == [ 1337, 6502, 42, 17, 42 ]);
-	c = movingBuffer();
-	assert(b.peek!uint == [ 6502 ]);
-	assert(c.peek!uint.length == 0);
 }
 
 version(unittest) {
@@ -305,13 +248,13 @@ version(unittest) {
 }
 
 unittest {
-	auto b = movingBuffer();
-	testBuffer(b);
+	auto b = typedBuffer!int(movingBuffer());
+	testBuffer2(b);
 	// consume everything and check if b will reset its pointers.
-	b.consume!uint(b.peek!uint().length);
-	assert(b.peek!uint().length == 0);
-	assert(b.allocOffset == 0);
-	assert(b.peekOffset == 0);
+	b.consume(b.peek().length);
+	assert(b.peek().length == 0);
+	assert(b.buffer.allocOffset == 0);
+	assert(b.buffer.peekOffset == 0);
 }
 
 /**
