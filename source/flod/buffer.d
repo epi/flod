@@ -1,9 +1,44 @@
-/** Various buffer implementations.
- *
- *  Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
- *  Copyright: © 2016 Adrian Matoga
- *  License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
- */
+/**
+Various buffer implementations.
+
+In flod, a buffer is a FIFO with access to multiple elements at a time.
+
+A compliant buffer must implement the following member functions.
+
+---
+void[] alloc(size_t n);
+void commit(size_t n);
+const(void)[] peek();
+void consume(size_t n);
+---
+
+The semantics of these calls is as follows:
+$(UL
+ $(LI `alloc` extends the internal storage to accomodate at least `n` new bytes. It should return a slice where the
+  new data are to be written. Returning `null` or a smaller slice means that the buffer will never be able to fulfill
+  allocation request of that size.)
+ $(LI `commit` commits the first `n` bytes written to the slice obtained from `alloc`. `n` must be positive and
+  must never be greater than the length of the slice.)
+ $(LI `peek` returns a read-only, contiguous view on all the data committed to the buffer, but not yet consumed.)
+ $(LI `consume` removes `n` bytes from the front of the queue. `n` must be positive and must not be greater than
+  the length of the slice returned by `peek`.)
+)
+
+This module offers a few readily available buffer implementations, such as `MovingBuffer`, `MmappedBuffer`
+and `GCBuffer`.
+
+A buffer may impose a limit on the maximum length of contiguous slice that can be allocated. `FallbackBuffer`
+provides a means to switch to another buffer implementation if the primary one has such a limit.
+Extreme cases of such buffers are `NullBuffer` (always returns `null` slices) and `FailBuffer` (which always throws
+from `alloc`). They are mainly useful as "terminators" for composite buffers such as `FallbackBuffer`.
+
+Basic buffer implementation operates on raw slices of memory (`void[]`), but a safe, typed view can be
+implemented on top of that using `TypedBuffer`.
+
+Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
+Copyright: © 2016 Adrian Matoga
+License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
+*/
 module flod.buffer;
 
 import std.experimental.allocator.mallocator : Mallocator;
@@ -396,4 +431,126 @@ auto mmappedBuffer(size_t initialSize = 0, Flag!"grow" grow = Yes.grow)
 
 unittest {
 	testBuffer(typedBuffer!int(mmappedBuffer()));
+}
+
+/// A buffer that always returns empty slices.
+struct NullBuffer {
+	void[] alloc(size_t n) pure nothrow const @safe { return null; }
+	const(void)[] peek() pure nothrow const @safe { return null; }
+	void consume(size_t n) pure nothrow const @safe { assert(0); }
+	void commit(size_t n) pure nothrow const @safe { assert(0); }
+}
+
+///
+unittest {
+	NullBuffer nb;
+	assert(nb.peek() is null);
+	assert(nb.alloc(1) is null);
+}
+
+/// A buffer that always throws on `alloc`.
+struct FailBuffer {
+	void[] alloc(size_t n)
+	{
+		import core.exception : OutOfMemoryError;
+		static __gshared error = new OutOfMemoryError;
+		throw error;
+	}
+
+	const(void)[] peek() { return null; }
+	void consume(size_t n) { assert(0); }
+	void commit(size_t n) { assert(0); }
+}
+
+///
+unittest {
+	import core.exception : OutOfMemoryError;
+	import std.exception : assertThrown;
+	FailBuffer fb;
+	assert(fb.peek() is null);
+	assertThrown!OutOfMemoryError(fb.alloc(1));
+}
+
+/**
+A wrapper that forwards all calls to `Primary` and switches to `Fallback` as soon as
+`Primary` fails to fulfill an `alloc` request.
+*/
+struct FallbackBuffer(Primary, Fallback) {
+private:
+	Primary primary;
+	Fallback fallback;
+	bool currentIsPrimary = true;
+
+	void[] doAlloc(B1, B2)(ref B1 current, ref B2 other, size_t n)
+	{
+		auto result = current.alloc(n);
+		if (result.length >= n)
+			return result;
+		currentIsPrimary = !currentIsPrimary;
+		auto left = current.peek();
+		if (left.length) {
+			auto buf = other.alloc(left.length);
+			assert(buf.length >= left.length);
+			buf[0 .. left.length] = left[];
+		}
+		result = other.alloc(n);
+		assert(result.length >= n);
+		return result;
+	}
+
+public:
+	const(void)[] peek()()
+	{
+		if (currentIsPrimary)
+			return primary.peek();
+		else
+			return fallback.peek();
+	}
+
+	void[] alloc()(size_t n)
+	{
+		if (currentIsPrimary)
+			return doAlloc(primary, fallback, n);
+		else
+			return doAlloc(fallback, primary, n);
+	}
+
+	void commit()(size_t n)
+	{
+		if (currentIsPrimary)
+			primary.commit(n);
+		else
+			fallback.commit(n);
+	}
+
+	void consume()(size_t n)
+	{
+		if (currentIsPrimary)
+			primary.consume(n);
+		else
+			fallback.consume(n);
+	}
+}
+
+/// ditto
+auto fallbackBuffer(Primary, Fallback)(Primary p, Fallback f)
+{
+	return FallbackBuffer!(Primary, Fallback)(p, f);
+}
+
+///
+unittest {
+	auto b = fallbackBuffer(NullBuffer(), GCBuffer());
+	assert(b.currentIsPrimary);
+	assert(b.peek().length == 0);
+	assert(b.currentIsPrimary);
+	auto v = b.alloc(1024);
+	assert(!b.currentIsPrimary);
+	b.commit(777);
+	assert(!b.currentIsPrimary);
+	assert(b.peek().length == 777);
+	assert(!b.currentIsPrimary);
+	b.consume(333);
+	assert(!b.currentIsPrimary);
+	assert(b.peek().length == 444);
 }
