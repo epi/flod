@@ -35,6 +35,17 @@ from `alloc`). They are mainly useful as "terminators" for composite buffers suc
 Basic buffer implementation operates on raw slices of memory (`void[]`), but a safe, typed view can be
 implemented on top of that using `TypedBuffer`.
 
+A buffer can increase its capacity to accomodate larger contiguous slices. Buffer capacity growth is controlled
+by a growth policy. A growth policy is any object `p` for which the following code compiles:
+
+---
+auto q = p;              // p can be copied
+size_t cap = p.capacity; // get current capacity
+cap = p.expand(cap + 1); // increase capacity to at least cap + 1
+---
+
+Two growth policies are implemented in this module: `StaticCapacity` and `ExponentialGrowth`.
+
 Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
 Copyright: © 2016 Adrian Matoga
 License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
@@ -57,6 +68,62 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 		return allocator.goodAllocSize(n);
 	else
 		return n.alignUp(size_t.sizeof);
+}
+
+/**
+A growth policy with compile-time fixed capacity.
+*/
+struct StaticCapacity(size_t capacity_) {
+	/// Current capacity.
+	enum size_t capacity = capacity_;
+	/// Always fails (`assert(0)`).
+	static size_t expand()(size_t min_capacity) pure @nogc { assert(0); }
+}
+
+///
+unittest {
+	auto gp = StaticCapacity!4096();
+	static assert(gp.capacity == 4096);
+	static assert(!__traits(compiles, { enum x = gp.expand(8192); }));
+}
+
+/**
+A growth policy that increases the capacity exponentially.
+
+Upon a call to expand, new capacity is computed as:
+---
+capacity = max(min_capacity, capacity * mul / div)
+---
+*/
+struct ExponentialGrowth(ulong mul, ulong div) {
+private:
+	size_t capacity_;
+public:
+	/// Sets capacity to `initial_capacity`.
+	this(size_t initial_capacity) pure nothrow @nogc { capacity_ = initial_capacity; }
+
+	/// Returns current capacity.
+	@property size_t capacity() const pure nothrow @nogc { return capacity_; }
+
+	/**
+	Increases capacity to `max(min_capacity, capacity * mul / div)`.
+	Returns: New capacity.
+	*/
+	size_t expand(size_t min_capacity) nothrow @nogc
+	{
+		import std.algorithm : max;
+		return capacity_ = cast(size_t) max(ulong(min_capacity), ulong(capacity_) * mul / div);
+	}
+}
+
+///
+unittest {
+	auto gp = ExponentialGrowth!(3, 2)(4096);
+	assert(gp.capacity == 4096);
+	assert(gp.expand(4097) == 6144);
+	assert(gp.capacity == 6144);
+	assert(gp.expand(31337) == 31337);
+	assert(gp.capacity == 31337);
 }
 
 /**
@@ -178,8 +245,9 @@ A buffer that relies on moving chunks of data in memory
 to ensure that contiguous slices of any requested size can always be provided.
 Params:
  Allocator = _Allocator used for internal storage allocation.
+ GrowthPolicy = Growth policy.
 */
-struct MovingBuffer(Allocator) {
+struct MovingBuffer(Allocator, GrowthPolicy) {
 private:
 	import flod.meta : NonCopyable;
 	mixin NonCopyable;
@@ -188,6 +256,7 @@ private:
 	size_t peekOffset;
 	size_t allocOffset;
 	Allocator allocator;
+	GrowthPolicy growthPolicy;
 
 	invariant {
 		assert(peekOffset <= allocOffset);
@@ -195,11 +264,13 @@ private:
 	}
 
 public:
-	this(Allocator allocator, size_t initialSize = 0) @trusted
+	///
+	this(Allocator allocator, GrowthPolicy growth_policy) @trusted
 	{
 		this.allocator = allocator;
-		if (initialSize > 0)
-			storage = allocator.allocate(allocator.goodSize(initialSize));
+		this.growthPolicy = growth_policy;
+		if (growthPolicy.capacity > 0)
+			storage = allocator.allocate(allocator.goodSize(growthPolicy.capacity));
 	}
 
 	~this() @trusted
@@ -218,7 +289,7 @@ public:
 		memmove(storage.ptr, storage.ptr + peekOffset, allocOffset - peekOffset);
 		allocOffset -= peekOffset;
 		peekOffset = 0;
-		size_t newSize = goodSize(allocator, allocOffset + n);
+		size_t newSize = goodSize(allocator, growthPolicy.expand(allocOffset + n));
 		if (storage.length < newSize)
 			allocator.reallocate(storage, newSize);
 		assert(storage.length >= allocOffset + n);
@@ -250,9 +321,10 @@ public:
 }
 
 /// ditto
-auto movingBuffer(Allocator)(Allocator allocator = Mallocator.instance)
+auto movingBuffer(Allocator, GrowthPolicy)(
+	Allocator allocator = Mallocator.instance, GrowthPolicy growth_policy = ExponentialGrowth!(3, 2)(0))
 {
-	return MovingBuffer!Allocator(allocator);
+	return MovingBuffer!(Allocator, GrowthPolicy)(allocator, growth_policy);
 }
 
 unittest {
@@ -269,8 +341,11 @@ unittest {
 A circular buffer which avoids moving data around, but instead maps the same physical memory block twice
 into two adjacent virtual memory blocks.
 It $(U does) move data blocks when growing the buffer.
+
+Params:
+ GrowthPolicy = Growth policy.
 */
-struct MmappedBuffer {
+struct MmappedBuffer(GrowthPolicy) {
 private:
 	enum pageSize = 4096;
 	import flod.meta : NonCopyable;
@@ -284,8 +359,8 @@ private:
 	void[] storage;
 	size_t peekOffset;
 	size_t peekableLength;
+	GrowthPolicy growthPolicy;
 	int fd = -1;
-	bool grow;
 
 	@property size_t allocOffset() const pure nothrow
 	{
@@ -301,13 +376,13 @@ private:
 		assert(peekOffset <= storage.length);
 	}
 
-	this(size_t initialSize, Flag!"grow" grow)
+	this(GrowthPolicy growth_policy)
 	{
 		if (!createFile())
 			return;
-		if (initialSize)
-			storage = allocate(initialSize);
-		this.grow = grow;
+		growthPolicy = growth_policy;
+		if (auto cap = growthPolicy.capacity)
+			storage = allocate(cap);
 	}
 
 	bool createFile()()
@@ -409,8 +484,8 @@ public:
 	///
 	void[] alloc()(size_t n)
 	{
-		if (grow && allocableLength < n) {
-			reallocate(peekOffset + peekableLength + n);
+		if (allocableLength < n) {
+			reallocate(growthPolicy.expand(peekOffset + peekableLength + n));
 			assert(allocableLength >= n);
 		}
 		return storage[allocOffset .. allocOffset + allocableLength];
@@ -424,9 +499,10 @@ public:
 	}
 }
 
-auto mmappedBuffer(size_t initialSize = 0, Flag!"grow" grow = Yes.grow)
+/// ditto
+auto mmappedBuffer(GrowthPolicy)(GrowthPolicy growth_policy = ExponentialGrowth!(2, 1)(4096))
 {
-	return MmappedBuffer(initialSize, grow);
+	return MmappedBuffer!GrowthPolicy(growth_policy);
 }
 
 unittest {
