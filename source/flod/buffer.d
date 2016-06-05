@@ -1,6 +1,8 @@
 /**
 Various buffer implementations.
 
+Buffer_interface:
+
 In flod, a buffer is a FIFO with access to multiple elements at a time.
 
 A compliant buffer must implement the following member functions.
@@ -27,6 +29,8 @@ $(UL
 This module offers a few readily available buffer implementations, such as `MovingBuffer`, `MmappedBuffer`
 and `GCBuffer`.
 
+Buffer_composition:
+
 A buffer may impose a limit on the maximum length of contiguous slice that can be allocated. `FallbackBuffer`
 provides a means to switch to another buffer implementation if the primary one has such a limit.
 Extreme cases of such buffers are `NullBuffer` (always returns `null` slices) and `FailBuffer` (which always throws
@@ -34,6 +38,8 @@ from `alloc`). They are mainly useful as "terminators" for composite buffers suc
 
 Basic buffer implementation operates on raw slices of memory (`void[]`), but a safe, typed view can be
 implemented on top of that using `TypedBuffer`.
+
+Growth_policies:
 
 A buffer can increase its capacity to accomodate larger contiguous slices. Buffer capacity growth is controlled
 by a growth policy. A growth policy is any object `p` for which the following code compiles:
@@ -44,7 +50,8 @@ size_t cap = p.capacity; // get current capacity
 cap = p.expand(cap + 1); // increase capacity to at least cap + 1
 ---
 
-Two growth policies are implemented in this module: `StaticCapacity` and `ExponentialGrowth`.
+A few standard growth policies are implemented in this module:
+`FixedCapacity`, `IncrementalGrowth` and `ExponentialGrowth`.
 
 Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
 Copyright: © 2016 Adrian Matoga
@@ -72,6 +79,8 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 
 /**
 A growth policy with fixed capacity.
+
+See_also: `IncrementalGrowth`, `ExponentialGrowth`
 */
 struct FixedCapacity(size_t static_capacity = size_t.max) {
 	static if (static_capacity == size_t.max) {
@@ -106,15 +115,7 @@ unittest {
 	assertThrown!AssertError(gp.expand(8192));
 }
 
-/**
-A growth policy that increases the capacity exponentially.
-
-Upon a call to expand, new capacity is computed as:
----
-capacity = max(min_capacity, capacity * mul / div)
----
-*/
-struct ExponentialGrowth(ulong mul, ulong div) {
+mixin template GrowthPolicyBase() {
 private:
 	size_t capacity_;
 public:
@@ -123,15 +124,82 @@ public:
 
 	/// Returns current capacity.
 	@property size_t capacity() const pure nothrow @nogc { return capacity_; }
+}
+
+/**
+A growth policy that increases the capacity incrementally.
+
+See_also: `FixedCapacity`, `ExponentialGrowth`
+*/
+struct IncrementalGrowth(size_t inc = size_t.max) {
+	mixin GrowthPolicyBase;
+
+	static if (inc == size_t.max) {
+		///
+		size_t increment;
+		///
+		this(size_t increment, size_t initial_capacity)
+		{
+			this.increment = increment;
+			this.capacity_ = initial_capacity;
+		}
+	} else {
+		///
+		enum size_t increment = inc;
+	}
 
 	/**
-	Increases capacity to `max(min_capacity, capacity * mul / div)`.
+	Increases capacity to `max(min_capacity, capacity + increment)`.
 	Returns: New capacity.
 	*/
 	size_t expand(size_t min_capacity) nothrow @nogc
 	{
 		import std.algorithm : max;
-		return capacity_ = cast(size_t) max(ulong(min_capacity), ulong(capacity_) * mul / div);
+		return capacity_ = max(min_capacity, capacity_ + increment);
+	}
+}
+
+///
+unittest {
+	auto gp = IncrementalGrowth!15(400);
+	static assert(gp.increment == 15);
+	assert(gp.capacity == 400);
+	assert(gp.expand(401) == 415);
+	assert(gp.capacity == 415);
+	assert(gp.expand(1234) == 1234);
+	assert(gp.capacity == 1234);
+}
+
+///
+unittest {
+	auto gp = IncrementalGrowth!()(100, 400);
+	assert(gp.increment == 100);
+	assert(gp.capacity == 400);
+	assert(gp.expand(401) == 500);
+	assert(gp.expand(1000) == 1000);
+	gp.increment = 200;
+	assert(gp.increment == 200);
+	assert(gp.expand(1001) == 1200);
+}
+
+/**
+A growth policy that increases the capacity exponentially.
+
+Upon a call to `expand`, new capacity is set to the current capacity times a constant fraction `num/den`,
+or the requested `min_capacity`, whichever is larger.
+
+See_Also: `FixedCapacity`, `IncrementalGrowth`
+*/
+struct ExponentialGrowth(ulong num = ulong.max, ulong den = ulong.max) {
+	mixin GrowthPolicyBase;
+	/**
+	Increases capacity to `max(min_capacity, capacity * num / den)`.
+	Returns: New capacity.
+	*/
+	size_t expand(size_t min_capacity) nothrow @nogc
+	{
+		import std.algorithm : max;
+		return capacity_ = cast(size_t) max(ulong(min_capacity), ulong(capacity_) * num / den);
 	}
 }
 
