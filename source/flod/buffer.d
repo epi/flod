@@ -71,20 +71,39 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 }
 
 /**
-A growth policy with compile-time fixed capacity.
+A growth policy with fixed capacity.
 */
-struct StaticCapacity(size_t capacity_) {
-	/// Current capacity.
-	enum size_t capacity = capacity_;
+struct FixedCapacity(size_t static_capacity = size_t.max) {
+	static if (static_capacity == size_t.max) {
+		size_t capacity_;
+		@property size_t capacity()() const pure nothrow @nogc { return capacity_; }
+	} else {
+		enum size_t capacity = static_capacity;
+	}
+
 	/// Always fails (`assert(0)`).
 	static size_t expand()(size_t min_capacity) pure @nogc { assert(0); }
 }
 
+version(unittest) {
+	import core.exception : AssertError;
+	import std.exception : assertThrown;
+}
+
 ///
 unittest {
-	auto gp = StaticCapacity!4096();
+	// capacity fixed at compile-time
+	auto gp = FixedCapacity!4096();
 	static assert(gp.capacity == 4096);
-	static assert(!__traits(compiles, { enum x = gp.expand(8192); }));
+	assertThrown!AssertError(gp.expand(8192));
+}
+
+///
+unittest {
+	// capacity fixed at run time
+	auto gp = FixedCapacity!()(4096);
+	assert(gp.capacity == 4096);
+	assertThrown!AssertError(gp.expand(8192));
 }
 
 /**
