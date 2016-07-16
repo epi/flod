@@ -90,8 +90,8 @@ struct FixedCapacity(size_t static_capacity = size_t.max) {
 		enum size_t capacity = static_capacity;
 	}
 
-	/// Always fails (`assert(0)`).
-	static size_t expand()(size_t min_capacity) pure @nogc { assert(0); }
+	/// Returns the current capacity without changing it.
+	size_t expand()(size_t min_capacity) const pure nothrow @nogc { return capacity; }
 }
 
 version(unittest) {
@@ -104,7 +104,7 @@ unittest {
 	// capacity fixed at compile-time
 	auto gp = FixedCapacity!4096();
 	static assert(gp.capacity == 4096);
-	assertThrown!AssertError(gp.expand(8192));
+	assert(gp.expand(8192) == 4096);
 }
 
 ///
@@ -112,7 +112,7 @@ unittest {
 	// capacity fixed at run time
 	auto gp = FixedCapacity!()(4096);
 	assert(gp.capacity == 4096);
-	assertThrown!AssertError(gp.expand(8192));
+	assert(gp.expand(8192) == 4096);
 }
 
 mixin template GrowthPolicyBase() {
