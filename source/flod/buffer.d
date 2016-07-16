@@ -555,7 +555,7 @@ public:
 	///
 	const(void)[] peek()()
 	{
-		return storage[peekOffset .. peekOffset + peekableLength];
+		return storage.ptr[peekOffset .. peekOffset + peekableLength];
 	}
 
 	///
@@ -572,10 +572,15 @@ public:
 	void[] alloc()(size_t n)
 	{
 		if (allocableLength < n) {
-			reallocate(growthPolicy.expand(peekOffset + peekableLength + n));
-			assert(allocableLength >= n);
+			import std.stdio;
+			size_t newsize = growthPolicy.expand(peekableLength + n);
+			writeln("Expand  to ", peekableLength + n, " => ", newsize);
+			if (newsize < n)
+				return null;
+			if (newsize > storage.length)
+				reallocate(newsize);
 		}
-		return storage[allocOffset .. allocOffset + allocableLength];
+		return storage.ptr[allocOffset .. allocOffset + allocableLength];
 	}
 
 	///
@@ -587,13 +592,39 @@ public:
 }
 
 /// ditto
-auto mmappedBuffer(GrowthPolicy)(GrowthPolicy growth_policy = ExponentialGrowth!(2, 1)(4096))
+auto mmappedBuffer(GrowthPolicy)(GrowthPolicy growth_policy)
 {
 	return MmappedBuffer!GrowthPolicy(growth_policy);
 }
 
+/// ditto
+auto mmappedBuffer()
+{
+	return mmappedBuffer(ExponentialGrowth!(2, 1)(4096));
+}
+
 unittest {
-	testBuffer(typedBuffer!int(mmappedBuffer()));
+	auto buf = typedBuffer!ubyte(mmappedBuffer(FixedCapacity!4096()));
+	auto a = buf.alloc(2048);
+	assert(a.length == 4096);
+	buf.commit(2048);
+	assert(buf.peek().length == 2048);
+	buf.consume(2047);
+	assert(buf.peek().length == 1);
+	a = buf.alloc(4095);
+	assert(a.length == 4095);
+	a = buf.alloc(4097);
+	assert(a is null);
+	a = buf.alloc(4096);
+	assert(a.length == 4095);
+	buf.commit(4095);
+	assert(buf.peek().length == 4096);
+	buf.consume(2050);
+	assert(buf.peek().length == 2046);
+}
+
+unittest {
+//	testBuffer(typedBuffer!int(mmappedBuffer()));
 }
 
 /// A buffer that always returns empty slices.
