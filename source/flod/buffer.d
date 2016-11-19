@@ -39,20 +39,6 @@ from `alloc`). They are mainly useful as "terminators" for composite buffers suc
 Basic buffer implementation operates on raw slices of memory (`void[]`), but a safe, typed view can be
 implemented on top of that using `TypedBuffer`.
 
-Growth_policies:
-
-A buffer can increase its capacity to accomodate larger contiguous slices. Buffer capacity growth is controlled
-by a growth policy. A growth policy is any object `p` for which the following code compiles:
-
----
-auto q = p;              // p can be copied
-size_t cap = p.capacity; // get current capacity
-cap = p.expand(cap + 1); // increase capacity to at least cap + 1
----
-
-A few standard growth policies are implemented in this module:
-`FixedCapacity`, `IncrementalGrowth` and `ExponentialGrowth`.
-
 Authors: $(LINK2 https://github.com/epi, Adrian Matoga)
 Copyright: © 2016 Adrian Matoga
 License: $(LINK2 http://www.boost.org/users/license.html, BSL-1.0).
@@ -75,142 +61,6 @@ private size_t goodSize(Allocator)(ref Allocator, size_t n)
 		return allocator.goodAllocSize(n);
 	else
 		return n.alignUp(size_t.sizeof);
-}
-
-/**
-A growth policy with fixed capacity.
-
-See_also: `IncrementalGrowth`, `ExponentialGrowth`
-*/
-struct FixedCapacity(size_t static_capacity = size_t.max) {
-	static if (static_capacity == size_t.max) {
-		size_t capacity_;
-		@property size_t capacity()() const pure nothrow @nogc { return capacity_; }
-	} else {
-		enum size_t capacity = static_capacity;
-	}
-
-	/// Returns the current capacity without changing it.
-	size_t expand()(size_t min_capacity) const pure nothrow @nogc { return capacity; }
-}
-
-version(unittest) {
-	import core.exception : AssertError;
-	import std.exception : assertThrown;
-}
-
-///
-unittest {
-	// capacity fixed at compile-time
-	auto gp = FixedCapacity!4096();
-	static assert(gp.capacity == 4096);
-	assert(gp.expand(8192) == 4096);
-}
-
-///
-unittest {
-	// capacity fixed at run time
-	auto gp = FixedCapacity!()(4096);
-	assert(gp.capacity == 4096);
-	assert(gp.expand(8192) == 4096);
-}
-
-mixin template GrowthPolicyBase() {
-private:
-	size_t capacity_;
-public:
-	/// Sets capacity to `initial_capacity`.
-	this(size_t initial_capacity) pure nothrow @nogc { capacity_ = initial_capacity; }
-
-	/// Returns current capacity.
-	@property size_t capacity() const pure nothrow @nogc { return capacity_; }
-}
-
-/**
-A growth policy that increases the capacity incrementally.
-
-See_also: `FixedCapacity`, `ExponentialGrowth`
-*/
-struct IncrementalGrowth(size_t inc = size_t.max) {
-	mixin GrowthPolicyBase;
-
-	static if (inc == size_t.max) {
-		///
-		size_t increment;
-		///
-		this(size_t increment, size_t initial_capacity)
-		{
-			this.increment = increment;
-			this.capacity_ = initial_capacity;
-		}
-	} else {
-		///
-		enum size_t increment = inc;
-	}
-
-	/**
-	Increases capacity to `max(min_capacity, capacity + increment)`.
-	Returns: New capacity.
-	*/
-	size_t expand(size_t min_capacity) nothrow @nogc
-	{
-		import std.algorithm : max;
-		return capacity_ = max(min_capacity, capacity_ + increment);
-	}
-}
-
-///
-unittest {
-	auto gp = IncrementalGrowth!15(400);
-	static assert(gp.increment == 15);
-	assert(gp.capacity == 400);
-	assert(gp.expand(401) == 415);
-	assert(gp.capacity == 415);
-	assert(gp.expand(1234) == 1234);
-	assert(gp.capacity == 1234);
-}
-
-///
-unittest {
-	auto gp = IncrementalGrowth!()(100, 400);
-	assert(gp.increment == 100);
-	assert(gp.capacity == 400);
-	assert(gp.expand(401) == 500);
-	assert(gp.expand(1000) == 1000);
-	gp.increment = 200;
-	assert(gp.increment == 200);
-	assert(gp.expand(1001) == 1200);
-}
-
-/**
-A growth policy that increases the capacity exponentially.
-
-Upon a call to `expand`, new capacity is set to the current capacity times a constant fraction `num/den`,
-or the requested `min_capacity`, whichever is larger.
-
-See_Also: `FixedCapacity`, `IncrementalGrowth`
-*/
-struct ExponentialGrowth(ulong num = ulong.max, ulong den = ulong.max) {
-	mixin GrowthPolicyBase;
-	/**
-	Increases capacity to `max(min_capacity, capacity * num / den)`.
-	Returns: New capacity.
-	*/
-	size_t expand(size_t min_capacity) nothrow @nogc
-	{
-		import std.algorithm : max;
-		return capacity_ = cast(size_t) max(ulong(min_capacity), ulong(capacity_) * num / den);
-	}
-}
-
-///
-unittest {
-	auto gp = ExponentialGrowth!(3, 2)(4096);
-	assert(gp.capacity == 4096);
-	assert(gp.expand(4097) == 6144);
-	assert(gp.capacity == 6144);
-	assert(gp.expand(31337) == 31337);
-	assert(gp.capacity == 31337);
 }
 
 /**
@@ -332,9 +182,8 @@ A buffer that relies on moving chunks of data in memory
 to ensure that contiguous slices of any requested size can always be provided.
 Params:
  Allocator = _Allocator used for internal storage allocation.
- GrowthPolicy = Growth policy.
 */
-struct MovingBuffer(Allocator, GrowthPolicy) {
+struct MovingBuffer(Allocator) {
 private:
 	import flod.meta : NonCopyable;
 	mixin NonCopyable;
@@ -343,7 +192,6 @@ private:
 	size_t peekOffset;
 	size_t allocOffset;
 	Allocator allocator;
-	GrowthPolicy growthPolicy;
 
 	invariant {
 		assert(peekOffset <= allocOffset);
@@ -352,12 +200,10 @@ private:
 
 public:
 	///
-	this(Allocator allocator, GrowthPolicy growth_policy) @trusted
+	this(Allocator allocator) @trusted
 	{
 		this.allocator = allocator;
-		this.growthPolicy = growth_policy;
-		if (growthPolicy.capacity > 0)
-			storage = allocator.allocate(allocator.goodSize(growthPolicy.capacity));
+		storage = allocator.allocate(allocator.goodSize(4096));
 	}
 
 	~this() @trusted
@@ -376,7 +222,7 @@ public:
 		memmove(storage.ptr, storage.ptr + peekOffset, allocOffset - peekOffset);
 		allocOffset -= peekOffset;
 		peekOffset = 0;
-		size_t newSize = goodSize(allocator, growthPolicy.expand(allocOffset + n));
+		size_t newSize = goodSize(allocator, allocOffset + n + 4096);
 		if (storage.length < newSize)
 			allocator.reallocate(storage, newSize);
 		assert(storage.length >= allocOffset + n);
@@ -408,10 +254,9 @@ public:
 }
 
 /// ditto
-auto movingBuffer(Allocator, GrowthPolicy)(
-	Allocator allocator = Mallocator.instance, GrowthPolicy growth_policy = ExponentialGrowth!(3, 2)(0))
+auto movingBuffer(Allocator)(Allocator allocator = Mallocator.instance)
 {
-	return MovingBuffer!(Allocator, GrowthPolicy)(allocator, growth_policy);
+	return MovingBuffer!Allocator(allocator);
 }
 
 unittest {
@@ -428,11 +273,8 @@ unittest {
 A circular buffer which avoids moving data around, but instead maps the same physical memory block twice
 into two adjacent virtual memory blocks.
 It $(U does) move data blocks when growing the buffer.
-
-Params:
- GrowthPolicy = Growth policy.
 */
-struct MmappedBuffer(GrowthPolicy) {
+struct MmappedBuffer {
 private:
 	enum pageSize = 4096;
 	import flod.meta : NonCopyable;
@@ -446,7 +288,6 @@ private:
 	void[] storage;
 	size_t peekOffset;
 	size_t peekableLength;
-	GrowthPolicy growthPolicy;
 	int fd = -1;
 
 	@property size_t allocOffset() const pure nothrow
@@ -463,13 +304,11 @@ private:
 		assert(peekOffset <= storage.length);
 	}
 
-	this(GrowthPolicy growth_policy)
+	this(size_t initial_capacity)
 	{
 		if (!createFile())
 			return;
-		growthPolicy = growth_policy;
-		if (auto cap = growthPolicy.capacity)
-			storage = allocate(cap);
+		storage = allocate(initial_capacity);
 	}
 
 	bool createFile()()
@@ -572,9 +411,7 @@ public:
 	void[] alloc()(size_t n)
 	{
 		if (allocableLength < n) {
-			import std.stdio;
-			size_t newsize = growthPolicy.expand(peekableLength + n);
-			writeln("Expand  to ", peekableLength + n, " => ", newsize);
+			size_t newsize = peekableLength + n;
 			if (newsize < n)
 				return null;
 			if (newsize > storage.length)
@@ -592,19 +429,21 @@ public:
 }
 
 /// ditto
-auto mmappedBuffer(GrowthPolicy)(GrowthPolicy growth_policy)
+auto mmappedBuffer(size_t initial_capacity)
 {
-	return MmappedBuffer!GrowthPolicy(growth_policy);
+	return MmappedBuffer(initial_capacity);
 }
 
 /// ditto
 auto mmappedBuffer()
 {
-	return mmappedBuffer(ExponentialGrowth!(2, 1)(4096));
+	return mmappedBuffer(4096);
 }
 
 unittest {
-	auto buf = typedBuffer!ubyte(mmappedBuffer(FixedCapacity!4096()));
+	// TODO: implement a non-growing mmappedBuffer
+/+
+	auto buf = typedBuffer!ubyte(mmappedBuffer());
 	auto a = buf.alloc(2048);
 	assert(a.length == 4096);
 	buf.commit(2048);
@@ -621,10 +460,11 @@ unittest {
 	assert(buf.peek().length == 4096);
 	buf.consume(2050);
 	assert(buf.peek().length == 2046);
++/
 }
 
 unittest {
-//	testBuffer(typedBuffer!int(mmappedBuffer()));
+	testBuffer(typedBuffer!int(mmappedBuffer()));
 }
 
 /// A buffer that always returns empty slices.
