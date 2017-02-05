@@ -21,10 +21,18 @@ package struct TagAttribute(T, string k, TagOp o) {
 	enum TagOp op = o;
 }
 
-private enum tagSetterImpl() = tuple().expand;
-private enum tagGetterImpl() = tuple().expand;
-private enum tagSetterImpl(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.set)(), tagSetterImpl!Z).expand;
-private enum tagGetterImpl(T, string k, Z...) = tuple(TagAttribute!(T, k, TagOp.get)(), tagGetterImpl!Z).expand;
+// workaround for #17143
+private struct expandTuple(a...)
+{
+	enum value = tuple(a).expand;
+}
+
+private enum tagSetterImpl() = expandTuple!().value;
+private enum tagGetterImpl() = expandTuple!().value;
+private enum tagSetterImpl(T, string k, Z...) =
+	expandTuple!(TagAttribute!(T, k, TagOp.set)(), tagSetterImpl!Z).value;
+private enum tagGetterImpl(T, string k, Z...) =
+	expandTuple!(TagAttribute!(T, k, TagOp.get)(), tagGetterImpl!Z).value;
 
 /// This attribute declares the stage as setter for tag `key` of type `Type`.
 enum tagSetter(Type, string key, next...) = tagSetterImpl!(Type, key, next);
@@ -33,7 +41,7 @@ enum tagSetter(Type, string key, next...) = tagSetterImpl!(Type, key, next);
 enum tagGetter(Type, string key, next...) = tagGetterImpl!(Type, key, next);
 
 private enum isTagAttribute(S...) = is(typeof(S[0]) : TagAttribute!_a, _a...);
-package enum getTagAttributes(S...) = tuple(Filter!(isTagAttribute, __traits(getAttributes, S[0]))).expand;
+package enum getTagAttributes(S...) = expandTuple!(Filter!(isTagAttribute, __traits(getAttributes, S[0]))).value;
 
 unittest {
 	static struct Bar {}
@@ -60,7 +68,7 @@ private template TagAttributeTuple(size_t i, ta...)
 	if (allSatisfy!(isTagAttribute, ta))
 {
 	enum size_t index = i;
-	enum tagAttributes = tuple(ta).expand;
+	enum tagAttributes = expandTuple!(ta).value;
 
 	static if (tagAttributes.length) {
 		enum front = tagAttributes[0];
