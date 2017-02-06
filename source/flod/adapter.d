@@ -324,12 +324,12 @@ private template DefaultPushPullAdapter(Buffer) {
 
 			// whatever's left in pushed, keep it in buffer for the next time pull() is called
 			while (pushed.length > 0) {
-				auto b = buffer.alloc!E(pushed.length);
-				assert(b.length >= pushed.length);
-				auto len = (b.length, pushed.length);
-				b[0 .. len] = pushed[0 .. len];
+				auto len = pushed.length;
+				auto b = buffer.alloc!E(len);
+				assert(b.length >= len);
+				b[0 .. len] = pushed[];
 				buffer.commit!E(len);
-				pushed = pushed[len .. $];
+				pushed = null;
 			}
 			return requestedLength - dest.length;
 		}
