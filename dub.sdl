@@ -2,5 +2,13 @@ name "flod"
 description "Another I/O and multimedia streaming library."
 copyright "Copyright © 2016, Adrian Matoga"
 authors "Adrian Matoga"
-targetType "library"
 license "BSL-1.0"
+configuration "default" {
+	targetType "library"
+	excludedSourceFiles "source/flod/internal/test/*"
+}
+configuration "unittest" {
+	targetType "executable"
+	targetName "__test__library__"
+	mainSourceFile "source/flod/internal/test/runner.d"
+}
