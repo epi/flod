@@ -16,7 +16,7 @@ struct Unittest {
 	string[] comments;
 }
 
-struct ModuleInfo {
+struct ModInfo {
 	string name;
 	Unittest[] unittests;
 }
@@ -29,7 +29,7 @@ auto gatherTests(Module...)()
 	import std.array : appender;
 	import std.meta : Filter;
 	import std.traits : fullyQualifiedName;
-	auto mapp = appender!(ModuleInfo[]);
+	auto mapp = appender!(ModInfo[]);
 	foreach (m; Module) {
 		auto app = appender!(Unittest[]);
 		foreach (ut; __traits(getUnitTests, m)) {
@@ -40,7 +40,7 @@ auto gatherTests(Module...)()
 			}
 			app.put(Unittest(&ut, su));
 		}
-		mapp.put(ModuleInfo(fullyQualifiedName!m, app.data));
+		mapp.put(ModInfo(fullyQualifiedName!m, app.data));
 	}
 	return mapp.data;
 }
