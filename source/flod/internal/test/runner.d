@@ -23,14 +23,18 @@ struct ModInfo {
 
 auto gatherTests(Module...)()
 {
-	if (!__ctfe)
-		return null;
+	// FIXME:
+	version (LDC) {} else {
+		if (!__ctfe)
+			return null;
+	}
 
 	import std.array : appender;
 	import std.meta : Filter;
 	import std.traits : fullyQualifiedName;
 	auto mapp = appender!(ModInfo[]);
-	foreach (m; Module) {
+	foreach (mn; Module) {
+		mixin("import m = " ~ mn ~ ";");
 		auto app = appender!(Unittest[]);
 		foreach (ut; __traits(getUnitTests, m)) {
 			string[] su;
@@ -48,16 +52,16 @@ auto gatherTests(Module...)()
 auto gatherAllTests()
 {
 	return gatherTests!(
-		flod,
-		flod.adapter,
-		flod.buffer,
-		flod.file,
-		flod.meta,
-		flod.metadata,
-		flod.pipeline,
-		flod.range,
-		flod.traits,
-		flod.utils);
+		"flod",
+		"flod.adapter",
+		"flod.buffer",
+		"flod.file",
+		"flod.meta",
+		"flod.metadata",
+		"flod.pipeline",
+		"flod.range",
+		"flod.traits",
+		"flod.utils");
 }
 
 int runTests(bool[string] module_list)
@@ -67,7 +71,10 @@ int runTests(bool[string] module_list)
 	import std.algorithm : map, filter, joiner;
 	import core.atomic;
 
-	static __gshared immutable modules = gatherAllTests;
+	version (LDC) // FIXME: "Error: function alias __unittestL63_24 forward declaration" etc.
+		immutable modules = gatherAllTests;
+	else version(DigitalMars)
+		static __gshared immutable auto modules = gatherAllTests;
 	shared uint failed;
 	shared uint passed;
 	foreach (test; modules
